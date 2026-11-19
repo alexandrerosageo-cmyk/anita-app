@@ -170,3 +170,4 @@ tr.riscado .btn { text-decoration: none; }
 @media (min-width: 640px) { .kpis.seis { grid-template-columns: repeat(3, 1fr); } }
 .fixa { border-bottom: 1px solid var(--borda); padding-bottom: .5rem; margin-bottom: .4rem; }
 .fixa select { font-size: .85rem; padding: .4rem .5rem; }
+.kpi.clic { cursor: pointer; }

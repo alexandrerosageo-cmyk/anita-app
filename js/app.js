@@ -1,7 +1,7 @@
 import * as C from './calc.js';
 import { criarStore, salvarConfigFirebase, interpretarConfig, lerConfigFirebase, usarFirebasePadrao } from './store.js';
 
-const VERSAO = '1.7.1';
+const VERSAO = '1.7.2';
 const $app = document.getElementById('app');
 const S = { store: null, cfg: null, funcs: [], frota: [], meses: {}, tipoSel: 'paga', salvando: 0 };
 
@@ -325,7 +325,7 @@ async function telaMes(mk) {
   </div>
   <div class="kpis seis">
     <div class="kpi"><small>Receita</small><b>${brl(ap.tot.receita)}</b></div>
-    <div class="kpi destaque-contador"><small>Ao contador</small><b>${brl(C.aoContador(ap))}</b><small>receita − dinheiro (${brl(C.dinheiroMes(ap))})</small></div>
+    <div class="kpi destaque-contador clic" data-act="toggleContador"><small>Ao contador</small><b>${brl(C.aoContador(ap))}</b>${S.contadorAberto ? `<small>Receita ${brl(ap.tot.receita)} − dinheiro ${brl(C.dinheiroMes(ap))}</small>` : ''}</div>
     <div class="kpi"><small>Despesas</small><b>${brl(res.total)}</b></div>
     <div class="kpi"><small>Resultado</small><b class="${res.resultado < 0 ? 'neg' : 'pos'}">${brl(res.resultado)}</b></div>
     <div class="kpi"><small>Estacionamento</small><b>${brl(ap.tot.estacionamento)}</b></div>
@@ -863,6 +863,7 @@ $app.addEventListener('click', async (ev) => {
     case 'excluirFunc': { const f = S.funcs.find((x) => x.id === el.dataset.id); if (!confirm(`Excluir ${f.nome} do cadastro? O histórico de folhas e presenças continua guardado.`)) break; await S.store.del('funcionarios', f.id); S.funcs = S.funcs.filter((x) => x !== f); telaEquipe(S.ctxEquipe); break; }
     case 'delFolha': { const M = S.meses[S.ctxEquipe]; M.folha[el.dataset.id][el.dataset.k].splice(+el.dataset.i, 1); salvarMes(S.ctxEquipe); telaEquipe(S.ctxEquipe); break; }
     case 'imprimir': window.print(); break;
+    case 'toggleContador': S.contadorAberto = !S.contadorAberto; telaMes(S.ctxMes); break;
     case 'novaDesp': S.despEd = { novo: true, d: rascunhoDespesa(S.ctxDesp) }; telaDespesas(S.ctxDesp); break;
     case 'editarDesp': { const d = S.meses[S.ctxDesp].despesas[+el.dataset.i]; S.despEd = { novo: false, i: +el.dataset.i, d: JSON.parse(JSON.stringify({ itens: [], ...d })) }; telaDespesas(S.ctxDesp); window.scrollTo(0, 0); break; }
     case 'cancelarDesp': S.despEd = null; telaDespesas(S.ctxDesp); break;
