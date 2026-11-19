@@ -141,6 +141,15 @@ export function apuraMes(mk, mes, cfg, funcs) {
         porFunc[id].dias.push({ iso, contados: p.contados, base: p.base, pct: p.faixa.pct, valor: p.porPessoa });
       }
     }
+    // Regra antiga: todos da equipe do mês recebiam o prêmio do dia (como na planilha)
+    if (p.regra === 'antiga' && p.porPessoa) {
+      const equipe = equipeMes.length ? equipeMes : funcs.filter((f) => ativoEm(f, iso)).map((f) => f.id);
+      for (const id of equipe) {
+        if (!porFunc[id]) porFunc[id] = { id, nome: id, T: 0, F: 0, J: 0, premioDiario: 0, dias: [] };
+        porFunc[id].premioDiario = r2(porFunc[id].premioDiario + p.porPessoa);
+        porFunc[id].dias.push({ iso, contados: p.contados, base: p.base, pct: null, valor: p.porPessoa });
+      }
+    }
     for (const k of ['contados', 'pagas', 'cort', 'sulgas', 'retornos', 'valorPagas', 'base', 'receita', 'estacionamento']) tot[k] = r2(tot[k] + p[k]);
     tot.premioPessoaDia = r2(tot.premioPessoaDia + (p.porPessoa || 0));
     tot.simNova = r2(tot.simNova + premioDiaNova(dia, iso, cfg));
@@ -160,27 +169,42 @@ export function apuraMes(mk, mes, cfg, funcs) {
 }
 
 // Folha do mês para um funcionário (regra nova). Legado é exibido como importado.
+// Folha do mês de um funcionário.
+// f.fixos: lançamentos que se repetem todo mês [{desc, sinal:'+'|'-', tipo:'valor'|'pct', valor}]
+// folha (do mês): ajustes daquele mês (dias, VT, extras, descontos, fixos desligados)
 export function folhaFunc(f, pf, folha, cfg) {
   folha = folha || {};
   const diasTrab = folha.diasTrab != null ? Number(folha.diasTrab) : 30 - (pf ? pf.F : 0);
   const salMes = folha.salMes != null ? Number(folha.salMes) : Number(f.salario) || 0;
   const salario = r2(salMes / 30 * diasTrab);
-  const vtDias = folha.vtDias != null ? Number(folha.vtDias) : (pf ? pf.T : 0);
+  const vtDias = folha.vtDias != null ? Number(folha.vtDias) : (f.vtDiasPadrao ? Number(f.vtDiasPadrao) : (pf ? pf.T : 0));
   const vtDia = folha.vtDia != null ? Number(folha.vtDia) : Number(f.vtDia) || 0;
   const vt = r2(vtDias * vtDia);
-  const extras = r2((folha.extras || []).reduce((a, e) => a + (Number(e.valor) || 0), 0));
-  const descontos = r2((folha.descontos || []).reduce((a, e) => a + (Number(e.valor) || 0), 0));
+  const off = folha.fixosOff || [];
+  const fixos = (f.fixos || []).map((x, i) => ({
+    i, desc: x.desc, sinal: x.sinal === '-' ? '-' : '+', tipo: x.tipo, pct: x.tipo === 'pct' ? Number(x.valor) : null,
+    valor: x.tipo === 'pct' ? r2(salMes * (Number(x.valor) || 0) / 100) : r2(x.valor), ativo: !off.includes(i),
+  }));
+  const fx = (sn) => r2(fixos.filter((x) => x.ativo && x.sinal === sn).reduce((a, x) => a + x.valor, 0));
+  const extras = r2((folha.extras || []).reduce((a, e) => a + (Number(e.valor) || 0), 0) + fx('+'));
+  const descontos = r2((folha.descontos || []).reduce((a, e) => a + (Number(e.valor) || 0), 0) + fx('-'));
   const premio = pf ? pf.premioTotal : 0;
-  return { salMes, diasTrab, salario, vtDias, vtDia, vt, extras, descontos, premio, total: r2(salario + premio + extras - descontos) };
+  return { salMes, diasTrab, salario, vtDias, vtDia, vt, fixos, extras, descontos, premio, total: r2(salario + premio + extras - descontos) };
 }
 
 // Despesas e resultado do mês
+export const valorDesp = (d) => r2(Array.isArray(d.itens) && d.itens.length ? d.itens.reduce((a, i) => a + (Number(i.valor) || 0), 0) : d.valor);
+
+export const dinheiroMes = (ap) => r2(ap.lista.reduce((a, l) => a + (Number(((l.dia || {}).pg || {}).din) || 0), 0));
+export const aoContador = (ap) => r2(ap.tot.receita - dinheiroMes(ap));
+
 export function resultadoMes(ap, mes, cfg, funcs) {
   mes = mes || {};
-  if (mes.despesasLegado && !mes.despesas) {
-    const desp = mes.despesasLegado.map((x) => ({ ...x, auto: false }));
+  const manuais = (mes.despesas || []).map((x) => ({ ...x, valor: valorDesp(x), auto: false }));
+  if (mes.despesasLegado) {
+    const desp = [...mes.despesasLegado.map((x) => ({ ...x, auto: false, legado: true })), ...manuais];
     const total = r2(desp.reduce((a, b) => a + (Number(b.valor) || 0), 0));
-    return { despesas: desp, total, resultado: r2(ap.tot.receita - total), legado: true };
+    return { auto: [], manuais, legadas: mes.despesasLegado, despesas: desp, total, resultado: r2(ap.tot.receita - total), legado: true };
   }
   const auto = [];
   if (ap.regraNova) {
@@ -194,14 +218,13 @@ export function resultadoMes(ap, mes, cfg, funcs) {
     auto.push({ desc: 'Salários', valor: r2(sal), auto: true });
     auto.push({ desc: 'VT', valor: r2(vt), auto: true });
     auto.push({ desc: 'Prêmios', valor: r2(pr), auto: true });
-    if (ex) auto.push({ desc: 'Extras − descontos da folha', valor: r2(ex), auto: true });
+    if (ex) auto.push({ desc: ex > 0 ? 'Extras da folha (líquido)' : 'Descontos da folha (líquido)', valor: r2(ex), auto: true });
   }
-  const din = ap.lista.reduce((a, l) => a + (Number(((l.dia || {}).pg || {}).din) || 0), 0);
-  const imp = r2((ap.tot.receita - din) * (Number(cfg.impostoPct) || 0) / 100);
-  auto.push({ desc: `Impostos (${cfg.impostoPct}% s/ faturamento declarado)`, valor: imp, auto: true });
-  const desp = [...auto, ...(mes.despesas || []).map((x) => ({ ...x, auto: false }))];
+  const imp = r2(aoContador(ap) * (Number(cfg.impostoPct) || 0) / 100);
+  auto.push({ desc: `Impostos (${cfg.impostoPct}% s/ valor ao contador)`, valor: imp, auto: true });
+  const desp = [...auto, ...manuais];
   const total = r2(desp.reduce((a, b) => a + (Number(b.valor) || 0), 0));
-  return { despesas: desp, total, resultado: r2(ap.tot.receita - total), legado: false };
+  return { auto, manuais, legadas: [], despesas: desp, total, resultado: r2(ap.tot.receita - total), legado: false };
 }
 
 // Período Sulgás: do dia 19 ao dia 18 do mês seguinte

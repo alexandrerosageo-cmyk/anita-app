@@ -1,7 +1,7 @@
 import * as C from './calc.js';
 import { criarStore, salvarConfigFirebase, interpretarConfig, lerConfigFirebase, usarFirebasePadrao } from './store.js';
 
-const VERSAO = '1.1.0';
+const VERSAO = '1.7.0';
 const $app = document.getElementById('app');
 const S = { store: null, cfg: null, funcs: [], frota: [], meses: {}, tipoSel: 'paga', salvando: 0 };
 
@@ -58,9 +58,20 @@ const CFG_PADRAO = {
   precos: [39.9, 44.9, 54.9, 64.9, 69.9, 74.9, 79.9, 89.9].map((v) => ({ nome: brl(v), valor: v })),
   despesasFixas: [],
 };
+const CATEGORIAS_PADRAO = () => [
+  { id: 'produtos', nome: 'Produtos de lavagem' }, { id: 'manutencao', nome: 'Manutenção e consertos' },
+  { id: 'aluguel', nome: 'Aluguel / IPTU / Água' }, { id: 'luz', nome: 'Energia / Internet / Telefone' },
+  { id: 'contador', nome: 'Contador' }, { id: 'software', nome: 'Software' },
+  { id: 'prolabore', nome: 'Pró-labore / retiradas' }, { id: 'outros', nome: 'Outros' },
+];
+const PAGAMENTOS_PADRAO = () => C.PAGAMENTOS.map(([k, nome]) => ({ k, nome, ativo: k !== 'papel', detalhar: k === 'mens' }));
 
 async function carregarBase() {
   S.cfg = { ...CFG_PADRAO, ...((await S.store.get('config', 'app')) || {}) };
+  if (!Array.isArray(S.cfg.pagamentos) || !S.cfg.pagamentos.length) S.cfg.pagamentos = PAGAMENTOS_PADRAO();
+  if (!Array.isArray(S.cfg.categorias) || !S.cfg.categorias.length) S.cfg.categorias = CATEGORIAS_PADRAO();
+  S.cfg.fornecedores = S.cfg.fornecedores || [];
+  S.cfg.materiais = S.cfg.materiais || [];
   S.funcs = await S.store.list('funcionarios');
   S.frota = ((await S.store.get('frota', 'lista')) || {}).veiculos || [];
   S.meses = {};
@@ -111,6 +122,7 @@ async function rotear() {
     else if (rota === 'equipe') await telaEquipe(a || mkDe(hojeISO()));
     else if (rota === 'demo') await telaDemo(a, b);
     else if (rota === 'sulgas') await telaSulgas(a || hojeISO());
+    else if (rota === 'despesas') await telaDespesas(a || mkDe(hojeISO()));
     else if (rota === 'ajustes') await telaAjustes();
     else location.hash = '#/hoje';
   } catch (e) { console.error(e); $app.innerHTML = moldura(`<div class="card erro">Erro: ${esc(e.message)}</div>`); }
@@ -119,7 +131,7 @@ async function rotear() {
 
 function moldura(corpo, titulo) {
   const r = S.rota;
-  const nav = [['hoje', '📝', 'Hoje'], ['mes', '📊', 'Mês'], ['equipe', '👥', 'Equipe'], ['sulgas', '🚐', 'Sulgás'], ['ajustes', '⚙️', 'Ajustes']];
+  const nav = [['hoje', '📝', 'Hoje'], ['mes', '📊', 'Mês'], ['equipe', '👥', 'Equipe'], ['despesas', '🧾', 'Despesas'], ['sulgas', '🚐', 'Sulgás'], ['ajustes', '⚙️', 'Ajustes']];
   return `<header class="topo"><div><b>Estacionamento Anita</b>${titulo ? `<small>${titulo}</small>` : ''}</div><span id="status" class="status">${S.store.modo === 'local' ? 'modo local' : ''}</span></header>
   <main>${corpo}</main>
   <nav class="nav">${nav.map(([k, i, t]) => `<a href="#/${k}" class="${r === k || (r === 'demo' && k === 'equipe') ? 'ativo' : ''}"><span>${i}</span>${t}</a>`).join('')}</nav>`;
@@ -127,6 +139,7 @@ function moldura(corpo, titulo) {
 
 // ---------- TELA: dia ----------
 async function telaDia(iso) {
+  if (S.ctxDia && S.ctxDia.iso !== iso) S.detAberto = null;
   const mk = mkDe(iso), dd = iso.slice(8);
   const M = await mes(mk);
   const dia = M.dias[dd] || {};
@@ -175,17 +188,20 @@ async function telaDia(iso) {
     <h3>Lançar lavagem</h3>
     <div class="seg" role="tablist">${['paga', 'cortesia', 'sulgas', 'retorno'].map((t) => `<button data-act="tipo" data-t="${t}" class="${S.tipoSel === t ? 'on t-' + t : ''}">${C.TIPOS[t].nome}</button>`).join('')}</div>
     ${S.tipoSel === 'sulgas' ? `
-      <div class="linha"><input id="placaSul" list="frotaList" placeholder="Placa do veículo Sulgás" autocapitalize="characters">
+      <div class="linha"><input id="placaSul" list="frotaList" placeholder="Placa do veículo Sulgás" autocapitalize="characters" autocomplete="off">
       <button class="btn" data-act="addSulgas">+ Sulgás ${brl(S.cfg.sulgasValor)}</button></div>
+      <p id="infoPlaca" class="mini">Digite a placa: o motorista cadastrado aparece aqui.</p>
+      <div id="novoMot" class="linha" hidden><input id="motSul" placeholder="Motorista desta placa" autocomplete="off"><input id="modSul" placeholder="Modelo (opcional)" style="max-width:8rem"></div>
       <datalist id="frotaList">${S.frota.map((v) => `<option value="${esc(v.placa)}">${esc(v.nome || '')} ${esc(v.modelo || '')}</option>`).join('')}</datalist>`
     : `<div class="precos">${S.cfg.precos.map((pr, i) => `<button class="preco t-${S.tipoSel}" data-act="addLav" data-i="${i}"><b>${esc(pr.nome)}</b>${!mesmoRotulo(pr) ? `<small>${brl(pr.valor)}</small>` : ''}</button>`).join('')}</div>
       ${S.tipoSel === 'paga' ? `<div class="linha"><input id="outroValor" inputmode="decimal" placeholder="Outro valor (com desconto)"><button class="btn" data-act="addOutro">+ Adicionar</button></div>` : `<p class="mini">${S.tipoSel === 'cortesia' ? 'Cortesia conta como carro, mas entra com valor zero.' : 'Retorno (refeito por reclamação) não conta para meta nem para a base.'}</p>`}`}
-    ${lav.length ? `<ol class="lavs">${lav.map((l, i) => `<li class="t-${l.t}"><span>${C.TIPOS[l.t].nome}${l.placa ? ' · ' + esc(l.placa) : ''}${l.desc ? ' · ' + esc(l.desc) : ''}</span><b>${l.t === 'paga' || l.t === 'sulgas' ? brl(l.v) : '—'}</b><button class="x" data-act="delLav" data-i="${i}" aria-label="remover">✕</button></li>`).join('')}</ol>` : '<p class="vazio">Nenhuma lavagem lançada neste dia.</p>'}
+    ${lav.length ? `<ol class="lavs">${lav.map((l, i) => `<li class="t-${l.t}"><span>${C.TIPOS[l.t].nome}${l.placa ? ' · ' + esc(l.placa) : ''}${l.t === 'sulgas' && (l.mot || motoristaDe(l.placa)) ? ' · ' + esc(l.mot || motoristaDe(l.placa)) : ''}${l.desc ? ' · ' + esc(l.desc) : ''}</span><b>${l.t === 'paga' || l.t === 'sulgas' ? brl(l.v) : '—'}</b><button class="x" data-act="delLav" data-i="${i}" aria-label="remover">✕</button></li>`).join('')}</ol>` : '<p class="vazio">Nenhuma lavagem lançada neste dia.</p>'}
   </section>`}
 
   <section class="card">
     <h3>Caixa do dia <small>${brl(p.receita)} · estacionamento ${brl(p.estacionamento)}</small></h3>
-    <div class="grade2">${C.PAGAMENTOS.map(([k, t]) => `<label>${t}<input inputmode="decimal" data-pg="${k}" value="${fmtN((dia.pg || {})[k])}"></label>`).join('')}</div>
+    <div class="grade2">${camposDoDia(dia).map((c) => campoCaixa(c, dia)).join('')}</div>
+    ${S.detAberto && campos().some((c) => c.k === S.detAberto && c.detalhar) ? blocoDet(dia, S.detAberto) : ''}
   </section>
 
   ${C.ehDomingo(iso) && !funcs.length ? '' : `
@@ -201,6 +217,59 @@ async function telaDia(iso) {
   </section>`;
   $app.innerHTML = moldura(corpo, 'Lançamento do dia');
   S.ctxDia = { iso, mk, dd };
+}
+
+// ---------- frota Sulgás ----------
+const normPlaca = (p) => String(p || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+const veiculo = (pl) => S.frota.find((x) => normPlaca(x.placa) === normPlaca(pl));
+const motoristaDe = (pl) => (veiculo(pl) || {}).nome || '';
+function mostrarPlaca() {
+  const inp = document.getElementById('placaSul'); if (!inp) return;
+  const pl = normPlaca(inp.value), info = document.getElementById('infoPlaca'), box = document.getElementById('novoMot');
+  if (pl.length < 7) { info.textContent = 'Digite a placa: o motorista cadastrado aparece aqui.'; info.className = 'mini'; box.hidden = true; return; }
+  const v = veiculo(pl);
+  if (v && v.nome) { info.innerHTML = `✅ <b>${esc(v.nome)}</b>${v.modelo ? ' · ' + esc(v.modelo) : ''}${v.cor ? ' · ' + esc(v.cor) : ''}`; info.className = 'mini ok'; box.hidden = true; }
+  else { info.textContent = v ? 'Placa cadastrada, mas sem motorista. Informe abaixo:' : 'Placa nova na frota. Informe o motorista:'; info.className = 'mini alerta'; box.hidden = false; }
+}
+
+// ---------- campos do caixa e detalhamento por nome ----------
+const campos = () => S.cfg.pagamentos;
+const campoNome = (k) => (campos().find((c) => c.k === k) || {}).nome || k;
+const detLista = (dia, k) => (dia.det && Array.isArray(dia.det[k]) ? dia.det[k] : []);
+const camposDoDia = (dia) => campos().filter((c) => c.ativo !== false || (dia.pg || {})[c.k] || detLista(dia, c.k).length);
+function campoCaixa(c, dia) {
+  const v = (dia.pg || {})[c.k];
+  if (!c.detalhar) return `<label>${esc(c.nome)}${c.ativo === false ? ' <small>(desativado)</small>' : ''}<input inputmode="decimal" data-pg="${c.k}" value="${fmtN(v)}"></label>`;
+  const l = detLista(dia, c.k);
+  return `<label>${esc(c.nome)}<button type="button" class="btn campo-btn ${S.detAberto === c.k ? 'on' : ''}" data-act="detToggle" data-k="${c.k}">${v ? brl(v) : 'Lançar'}<small>${l.length ? `${l.length} pagamento${l.length > 1 ? 's' : ''}` : 'toque para detalhar'}</small></button></label>`;
+}
+function blocoDet(dia, k) {
+  const l = detLista(dia, k);
+  const semDetalhe = !l.length && (dia.pg || {})[k];
+  const sug = (S.cfg.nomes || {})[k] || [];
+  return `<div class="mens">
+    <h4>${esc(campoNome(k))}: pagamentos por nome</h4>
+    ${semDetalhe ? `<p class="mini">Este dia tem ${brl(dia.pg[k])} sem detalhamento. Ao incluir o primeiro nome, o total passa a ser a soma da lista.</p>` : ''}
+    ${l.length ? `<ol class="lavs">${l.map((m, i) => `<li><span>${esc(m.nome)}${m.obs ? `<small>${esc(m.obs)}</small>` : ''}</span><b>${brl(m.valor)}</b><button class="x" data-act="delDet" data-i="${i}" aria-label="remover">✕</button></li>`).join('')}</ol>
+      <p class="mini" style="text-align:right">Total: <b>${brl(l.reduce((a, m) => a + (Number(m.valor) || 0), 0))}</b></p>` : ''}
+    <div class="linha"><input id="detNome" list="detNomes" placeholder="Nome" autocomplete="off"><input id="detValor" inputmode="decimal" placeholder="R$" style="max-width:6rem"><button class="btn" data-act="addDet">+</button></div>
+    <input id="detObs" placeholder="Obs. (opcional: placa, mês de referência, forma de pgto)" class="obs">
+    <datalist id="detNomes">${sug.map((m) => `<option value="${esc(m.nome)}">${m.valor ? brl(m.valor) : ''}</option>`).join('')}</datalist>
+  </div>`;
+}
+function recalcDet(dia, k) {
+  dia.pg = dia.pg || {};
+  const t = C.r2(detLista(dia, k).reduce((a, m) => a + (Number(m.valor) || 0), 0));
+  if (t) dia.pg[k] = t; else delete dia.pg[k];
+  if (!detLista(dia, k).length && dia.det) { delete dia.det[k]; if (!Object.keys(dia.det).length) delete dia.det; }
+}
+async function lembrarNome(k, nome, valor) {
+  S.cfg.nomes = S.cfg.nomes || {};
+  const lista = S.cfg.nomes[k] = S.cfg.nomes[k] || [];
+  const ex = lista.find((m) => m.nome.toLowerCase() === nome.toLowerCase());
+  if (ex) { if (ex.valor === valor) return; ex.valor = valor; } else lista.push({ nome, valor });
+  lista.sort((a, b) => a.nome.localeCompare(b.nome));
+  try { await salvarCfg(); } catch (e) { /* sugestões são só conveniência */ }
 }
 
 function diaAtual(criar = true) {
@@ -247,8 +316,10 @@ async function telaMes(mk) {
   <div class="navdata">
     <a class="btn ic" href="#/mes/${somaMes(mk, -1)}">‹</a><b class="titmes">${nomeMes(mk)}</b><a class="btn ic" href="#/mes/${somaMes(mk, 1)}">›</a>
   </div>
-  <div class="kpis">
+  <div class="kpis seis">
     <div class="kpi"><small>Receita</small><b>${brl(ap.tot.receita)}</b></div>
+    <div class="kpi destaque-contador"><small>Ao contador</small><b>${brl(C.aoContador(ap))}</b><small>receita − dinheiro (${brl(C.dinheiroMes(ap))})</small></div>
+    <div class="kpi"><small>Despesas</small><b>${brl(res.total)}</b></div>
     <div class="kpi"><small>Resultado</small><b class="${res.resultado < 0 ? 'neg' : 'pos'}">${brl(res.resultado)}</b></div>
     <div class="kpi"><small>Estacionamento</small><b>${brl(ap.tot.estacionamento)}</b></div>
     <div class="kpi"><small>Lavagens pagas</small><b>${brl(ap.tot.valorPagas)}</b></div>
@@ -266,6 +337,16 @@ async function telaMes(mk) {
     ${graficoMes(ap)}
   </section>
 
+  ${campos().filter((c) => c.detalhar).map((c) => {
+    const pags = ap.lista.flatMap((l) => detLista(l.dia || {}, c.k).map((m) => ({ ...m, iso: l.iso })));
+    const total = ap.lista.reduce((a, l) => a + (Number(((l.dia || {}).pg || {})[c.k]) || 0), 0);
+    if (!total && !pags.length) return '';
+    const semDet = C.r2(total - pags.reduce((a, m) => a + (Number(m.valor) || 0), 0));
+    return `<section class="card"><h3>${esc(c.nome)} <small>${brl(total)} no mês</small></h3>
+      ${pags.length ? `<table class="tab"><tbody>${pags.sort((a, b) => a.nome.localeCompare(b.nome) || a.iso.localeCompare(b.iso)).map((m) => `<tr data-href="#/hoje/${m.iso}"><td>${esc(m.nome)}${m.obs ? `<small>${esc(m.obs)}</small>` : ''}</td><td>${dataBR(m.iso).slice(0, 5)}</td><td class="r">${brl(m.valor)}</td></tr>`).join('')}</tbody></table>` : ''}
+      ${semDet > 0.009 ? `<p class="mini">${brl(semDet)} lançados sem nome (dias importados ou sem detalhe).</p>` : ''}</section>`;
+  }).join('')}
+
   <section class="card">
     <h3>Dias</h3>
     <table class="tab"><thead><tr><th>Dia</th><th>Carros</th><th>Base</th><th>Faixa</th><th>Prêmio/p.</th></tr></thead><tbody>
@@ -276,104 +357,130 @@ async function telaMes(mk) {
   </section>
 
   <section class="card">
-    <h3>Despesas e resultado</h3>
+    <h3>Despesas e resultado <a class="tag" href="#/despesas/${mk}">lançar / detalhar →</a></h3>
     <table class="tab desp"><tbody>
       <tr><td>Receitas</td><td class="r"><b>${brl(ap.tot.receita)}</b></td><td></td></tr>
-      ${res.despesas.map((d, i) => `<tr><td>${esc(d.desc)}${d.obs ? `<small>${esc(d.obs)}</small>` : ''}${d.auto ? ' <span class="tag">auto</span>' : ''}</td><td class="r">−${brl(d.valor)}</td>
-        <td>${!d.auto && !res.legado ? `<button class="x" data-act="delDesp" data-i="${i - res.despesas.filter((x) => x.auto).length}">✕</button>` : ''}</td></tr>`).join('')}
+      ${res.auto.map((d) => `<tr><td>${esc(d.desc)} <span class="tag">auto</span></td><td class="r">${d.valor < 0 ? '+' + brl(-d.valor) : '−' + brl(d.valor)}</td><td></td></tr>`).join('')}
+      ${res.legadas.map((d) => `<tr><td>${esc(d.desc)}${d.obs ? `<small>${esc(d.obs)}</small>` : ''}</td><td class="r">−${brl(d.valor)}</td><td></td></tr>`).join('')}
+      ${porTipo(res.manuais).map((g) => `<tr data-href="#/despesas/${mk}"><td>${esc(g.nome)}<small>${g.n} lançamento${g.n > 1 ? 's' : ''}</small></td><td class="r">−${brl(g.valor)}</td><td></td></tr>`).join('')}
       <tr class="tot"><td>Resultado</td><td class="r"><b>${brl(res.resultado)}</b></td><td>${ap.tot.receita ? Math.round(res.resultado / ap.tot.receita * 100) + '%' : ''}</td></tr>
     </tbody></table>
-    ${res.legado ? '<p class="mini">Despesas importadas da planilha.</p>' : `
-    <form class="linha" id="fDesp"><input name="desc" placeholder="Despesa (ex.: Produtos)" required><input name="valor" inputmode="decimal" placeholder="Valor" required style="max-width:7rem"><button class="btn">+</button></form>
-    ${!(M.despesas || []).length && (S.cfg.despesasFixas || []).length ? `<button class="btn link" data-act="copiarFixas">Lançar despesas fixas (${S.cfg.despesasFixas.map((d) => esc(d.desc)).join(', ')})</button>` : ''}`}
+    ${res.legadas.length ? '<p class="mini">Despesas sem tipo vieram da planilha.</p>' : ''}
   </section>`;
   $app.innerHTML = moldura(corpo, 'Painel do mês');
   S.ctxMes = mk;
-  const f = document.getElementById('fDesp');
-  if (f) f.onsubmit = (ev) => { ev.preventDefault(); const fd = new FormData(f); M.despesas = M.despesas || []; M.despesas.push({ desc: fd.get('desc'), valor: num(fd.get('valor')) }); salvarMes(mk); telaMes(mk); };
 }
 
 // ---------- TELA: equipe / folha ----------
 async function telaEquipe(mk) {
   const M = await mes(mk);
   const ap = C.apuraMes(mk, M, S.cfg, S.funcs);
-  const legado = !ap.regraNova && (M.folhaLegado || []).length;
+  const soLeitura = (M.folhaLegado || []).length && !M.folhaApp;
   let folha = '';
-  if (legado) {
+  if (soLeitura) {
     const t = (k) => M.folhaLegado.reduce((a, e) => a + (e[k] || 0), 0);
     folha = `<section class="card"><h3>Folha importada da planilha</h3>
       <table class="tab"><thead><tr><th>Nome</th><th>Salário</th><th>Prêmio</th><th>Desc.</th><th>Total</th></tr></thead><tbody>
       ${M.folhaLegado.map((e) => `<tr><td>${esc(e.nome)}<small>${e.diasTrab}/${e.diasMes} dias${e.vtDias ? ` · VT ${e.vtDias}×${brl(e.vtDia)}` : ''}${e.obs ? ' · ' + esc(e.obs) : ''}</small></td><td>${brl(e.salario)}</td><td>${brl(e.premio ?? e.extras)}</td><td>${e.descontos ? brl(e.descontos) : ''}</td><td><b>${brl(e.total)}</b></td></tr>`).join('')}
-      <tr class="tot"><td>Total</td><td>${brl(t('salario'))}</td><td>${brl(t('premio') || t('extras'))}</td><td>${brl(t('descontos'))}</td><td>${brl(t('total'))}</td></tr></tbody></table></section>`;
-  } else if (!ap.regraNova) {
-    folha = `<section class="card"><p>Mês anterior ao regulamento novo e sem folha importada.</p></section>`;
+      <tr class="tot"><td>Total</td><td>${brl(t('salario'))}</td><td>${brl(t('premio') || t('extras'))}</td><td>${brl(t('descontos'))}</td><td>${brl(t('total'))}</td></tr></tbody></table>
+      <button class="btn" data-act="folhaNoApp">Editar esta folha no app</button>
+      <p class="mini">Copia os dias, VT e descontos acima para o app; daí em diante você ajusta salário, VT, extras e descontos aqui.</p></section>`;
   } else {
     const fm = ap.faixaMes;
-    const lista = S.funcs.filter((f) => { const pf = ap.porFunc[f.id]; return f.ativo !== false || (pf && (pf.T || pf.F || pf.J)); }).sort((a, b) => a.nome.localeCompare(b.nome));
-    let totGeral = 0;
+    const lista = S.funcs.filter((f) => { const pf = ap.porFunc[f.id]; return C.ativoEm(f, `${mk}-15`) || (pf && (pf.T || pf.F || pf.J || pf.premioDiario)) || ((M.folha || {})[f.id]); }).sort((a, b) => a.nome.localeCompare(b.nome));
+    let totGeral = 0, totVT = 0;
     folha = lista.map((f) => {
-      const pf = ap.porFunc[f.id] || { T: 0, F: 0, J: 0, previstos: 0, presencaPct: 0, premioDiario: 0, bonus: 0, premioTotal: 0, elegivelBonus: false };
+      const pf = ap.porFunc[f.id] || { T: 0, F: 0, J: 0, previstos: 0, presencaPct: 0, premioDiario: 0, bonus: 0, premioTotal: 0, elegivelBonus: false, dias: [] };
       const fo = (M.folha || {})[f.id] || {};
       const r = C.folhaFunc(f, pf, fo, S.cfg);
-      totGeral += r.total;
-      const motivo = !fm ? 'equipe abaixo da meta mensal' : (pf.elegivelBonus ? `meta mensal ${fm.nivel}` : `presença ${Math.round(pf.presencaPct * 100)}% < ${S.cfg.presencaMin}%`);
+      totGeral += r.total; totVT += r.vt;
+      const motivo = !ap.regraNova ? 'regra antiga: sem bônus' : !fm ? 'equipe abaixo da meta mensal' : (pf.elegivelBonus ? `meta mensal ${fm.nivel}` : `presença ${Math.round(pf.presencaPct * 100)}% < ${S.cfg.presencaMin}%`);
       return `<section class="card func">
         <h3>${esc(f.nome)} <small>${esc(f.funcao || 'função não definida')}</small></h3>
-        <p class="mini">Trabalhou ${pf.T} · Faltas ${pf.F} · Justificadas ${pf.J} · Presença ${pf.previstos ? Math.round(pf.presencaPct * 100) : 0}%</p>
+        <p class="mini">Trabalhou ${pf.T} · Faltas ${pf.F} · Justificadas ${pf.J}${pf.previstos ? ` · Presença ${Math.round(pf.presencaPct * 100)}%` : ''}</p>
         <table class="tab desp"><tbody>
-          <tr><td>Prêmio diário (${pf.dias ? pf.dias.filter((d) => d.valor).length : 0} dias com meta)</td><td class="r">${brl(pf.premioDiario)}</td></tr>
-          <tr><td>Bônus mensal <small>${motivo}</small></td><td class="r">${brl(pf.bonus)}</td></tr>
-          <tr class="sub"><td><b>Prêmio do mês</b> <a href="#/demo/${mk}/${f.id}" class="tag">demonstrativo</a></td><td class="r"><b>${brl(pf.premioTotal)}</b></td></tr>
           <tr><td>Salário <small>${brl(r.salMes)} ÷ 30 × <input class="mini-in" inputmode="numeric" data-folha="${f.id}" data-k="diasTrab" value="${r.diasTrab}"> dias</small></td><td class="r">${brl(r.salario)}</td></tr>
+          <tr><td>Prêmio diário <small>${pf.dias.filter((d) => d.valor).length} dias com prêmio${ap.regraNova ? '' : ' (regra antiga)'}</small></td><td class="r">${brl(pf.premioDiario)}</td></tr>
+          ${ap.regraNova ? `<tr><td>Bônus mensal <small>${motivo}</small></td><td class="r">${brl(pf.bonus)}</td></tr>` : ''}
+          ${r.fixos.map((x) => `<tr class="${x.ativo ? '' : 'riscado'}"><td>${x.sinal === '+' ? '+' : '−'} ${esc(x.desc)} <span class="tag">fixo${x.pct != null ? ' ' + pct(x.pct) : ''}</span>
+            <button class="btn link mini" data-act="fixoMes" data-id="${f.id}" data-i="${x.i}">${x.ativo ? 'não lançar este mês' : 'lançar este mês'}</button></td><td class="r">${x.sinal === '+' ? '' : '−'}${brl(x.valor)}</td></tr>`).join('')}
           ${(fo.extras || []).map((e, i) => `<tr><td>+ ${esc(e.desc)}</td><td class="r">${brl(e.valor)} <button class="x" data-act="delFolha" data-id="${f.id}" data-k="extras" data-i="${i}">✕</button></td></tr>`).join('')}
           ${(fo.descontos || []).map((e, i) => `<tr><td>− ${esc(e.desc)}</td><td class="r">−${brl(e.valor)} <button class="x" data-act="delFolha" data-id="${f.id}" data-k="descontos" data-i="${i}">✕</button></td></tr>`).join('')}
-          <tr class="tot"><td>Total a pagar</td><td class="r">${brl(r.total)}</td></tr>
+          <tr class="tot"><td>Total a pagar <a href="#/demo/${mk}/${f.id}" class="tag">demonstrativo do prêmio</a></td><td class="r">${brl(r.total)}</td></tr>
           <tr><td>VT <small><input class="mini-in" inputmode="numeric" data-folha="${f.id}" data-k="vtDias" value="${r.vtDias}"> dias × <input class="mini-in" inputmode="decimal" data-folha="${f.id}" data-k="vtDia" value="${fmtN(r.vtDia)}"></small></td><td class="r">${brl(r.vt)}</td></tr>
         </tbody></table>
-        <form class="linha fExtra" data-id="${f.id}"><select name="k"><option value="extras">+ Extra</option><option value="descontos">− Desconto</option></select><input name="desc" placeholder="Descrição" required><input name="valor" inputmode="decimal" placeholder="R$" required style="max-width:5.5rem"><button class="btn">ok</button></form>
-        <input class="obs" data-folha="${f.id}" data-k="obs" placeholder="Observação (ex.: pagar em 1/12)" value="${esc(fo.obs || '')}">
+        <form class="linha fExtra" data-id="${f.id}"><select name="k" style="max-width:7.5rem"><option value="extras">+ Extra</option><option value="descontos">− Desconto</option></select><input name="desc" placeholder="Hora extra, adiantamento…" required><input name="valor" inputmode="decimal" placeholder="R$" required style="max-width:5.5rem"><button class="btn">ok</button></form>
+        <input class="obs" data-folha="${f.id}" data-k="obs" placeholder="Observação (ex.: pago em 05/12)" value="${esc(fo.obs || '')}">
       </section>`;
-    }).join('') + `<section class="card"><h3>Total da folha <small>${brl(totGeral)}</small></h3></section>`;
+    }).join('') + `<section class="card"><h3>Total da folha <small>${brl(totGeral)} + VT ${brl(totVT)}</small></h3>
+      ${M.folhaApp ? '<button class="btn link" data-act="folhaVoltar">Voltar a mostrar a folha da planilha</button>' : ''}</section>`;
   }
+
+  const ficha = (f) => `
+    <details class="cad" ${S.fichaAberta === f.id ? 'open' : ''} data-ficha="${f.id}"><summary>${esc(f.nome)} <small>${f.ativo === false ? 'inativo' : `${esc(f.funcao || '')} · ${brl(f.salario)}`}</small></summary>
+      <form class="fFunc" data-id="${f.id}">
+        <div class="grade2">
+          <label>Nome<input name="nome" value="${esc(f.nome)}" required></label>
+          <label>Função<select name="funcao">${['', 'lavador', 'atendente'].map((o) => `<option ${f.funcao === o ? 'selected' : ''} value="${o}">${o || '—'}</option>`).join('')}</select></label>
+          <label>Salário (R$/mês)<input name="salario" inputmode="decimal" value="${fmtN(f.salario)}"></label>
+          <label>VT por dia (R$)<input name="vtDia" inputmode="decimal" value="${fmtN(f.vtDia)}"></label>
+          <label>Dias de VT por mês<input name="vtDiasPadrao" inputmode="numeric" value="${f.vtDiasPadrao || ''}" placeholder="= dias trabalhados"></label>
+          <label>Telefone<input name="telefone" inputmode="tel" value="${esc(f.telefone || '')}"></label>
+          <label>Admissão<input type="date" name="admissao" value="${f.admissao || ''}"></label>
+          <label>Desligamento<input type="date" name="desligamento" value="${f.desligamento || ''}"></label>
+          <label>Chave PIX<input name="pix" value="${esc(f.pix || '')}"></label>
+          <label class="chk"><input type="checkbox" name="ativo" ${f.ativo !== false ? 'checked' : ''}> Ativo</label>
+        </div>
+        <button class="btn grande">Salvar cadastro</button>
+      </form>
+      <h4>Lançamentos fixos todo mês</h4>
+      ${(f.fixos || []).length ? `<table class="tab desp"><tbody>${f.fixos.map((x, i) => `<tr><td>${x.sinal === '-' ? '−' : '+'} ${esc(x.desc)}</td><td class="r">${x.tipo === 'pct' ? pct(x.valor) + ' do salário' : brl(x.valor)} <button class="x" data-act="delFixo" data-id="${f.id}" data-i="${i}">✕</button></td></tr>`).join('')}</tbody></table>` : '<p class="mini">Ex.: + Gratificação de caixa 10% · − Adiantamento R$ 500 · − VT 6%.</p>'}
+      <form class="linha fFixo" data-id="${f.id}">
+        <select name="sinal" style="max-width:4.2rem"><option value="+">+</option><option value="-">−</option></select>
+        <input name="desc" placeholder="Descrição" required>
+        <input name="valor" inputmode="decimal" placeholder="valor" required style="max-width:4.8rem">
+        <select name="tipo" style="max-width:5.2rem"><option value="valor">R$</option><option value="pct">% sal.</option></select>
+        <button class="btn">+</button>
+      </form>
+      ${f.ativo === false ? `<button class="btn link perigo" data-act="excluirFunc" data-id="${f.id}">Excluir funcionário</button>` : ''}
+    </details>`;
 
   const corpo = `
   <div class="navdata"><a class="btn ic" href="#/equipe/${somaMes(mk, -1)}">‹</a><b class="titmes">${nomeMes(mk)}</b><a class="btn ic" href="#/equipe/${somaMes(mk, 1)}">›</a></div>
   ${folha}
   <section class="card">
     <h3>Cadastro de funcionários</h3>
-    ${[...S.funcs].sort((a, b) => (b.ativo !== false) - (a.ativo !== false) || a.nome.localeCompare(b.nome)).map((f) => `
-    <details class="cad"><summary>${esc(f.nome)} <small>${f.ativo === false ? 'inativo' : esc(f.funcao || '')}</small></summary>
-      <form class="fFunc grade2" data-id="${f.id}">
-        <label>Nome<input name="nome" value="${esc(f.nome)}"></label>
-        <label>Função<select name="funcao">${['', 'lavador', 'atendente'].map((o) => `<option ${f.funcao === o ? 'selected' : ''} value="${o}">${o || '—'}</option>`).join('')}</select></label>
-        <label>Salário (R$/mês)<input name="salario" inputmode="decimal" value="${fmtN(f.salario)}"></label>
-        <label>VT por dia<input name="vtDia" inputmode="decimal" value="${fmtN(f.vtDia)}"></label>
-        <label>Admissão<input type="date" name="admissao" value="${f.admissao || ''}"></label>
-        <label>Desligamento<input type="date" name="desligamento" value="${f.desligamento || ''}"></label>
-        <label class="chk"><input type="checkbox" name="ativo" ${f.ativo !== false ? 'checked' : ''}> Ativo</label>
-        <button class="btn">Salvar</button>
-      </form></details>`).join('')}
+    <p class="mini">Salário, VT, telefone, PIX e lançamentos fixos (que entram todo mês na folha). Extras e descontos de um mês só são lançados na folha, acima.</p>
+    ${[...S.funcs].sort((a, b) => (b.ativo !== false) - (a.ativo !== false) || a.nome.localeCompare(b.nome)).map(ficha).join('')}
     <form class="linha" id="fNovoFunc"><input name="nome" placeholder="Novo funcionário" required><button class="btn">+ Adicionar</button></form>
   </section>`;
   $app.innerHTML = moldura(corpo, 'Equipe e folha');
   S.ctxEquipe = mk;
 
+  document.querySelectorAll('details[data-ficha]').forEach((d) => d.addEventListener('toggle', () => { if (d.open) S.fichaAberta = d.dataset.ficha; else if (S.fichaAberta === d.dataset.ficha) S.fichaAberta = null; }));
   document.querySelectorAll('.fExtra').forEach((fm) => fm.onsubmit = (ev) => {
     ev.preventDefault(); const fd = new FormData(fm); const id = fm.dataset.id;
     M.folha = M.folha || {}; M.folha[id] = M.folha[id] || {}; const k = fd.get('k');
-    (M.folha[id][k] = M.folha[id][k] || []).push({ desc: fd.get('desc'), valor: num(fd.get('valor')) });
+    (M.folha[id][k] = M.folha[id][k] || []).push({ desc: fd.get('desc').trim(), valor: num(fd.get('valor')) });
     salvarMes(mk); telaEquipe(mk);
   });
   document.querySelectorAll('.fFunc').forEach((fm) => fm.onsubmit = async (ev) => {
     ev.preventDefault(); const fd = new FormData(fm); const f = S.funcs.find((x) => x.id === fm.dataset.id);
-    Object.assign(f, { nome: fd.get('nome').trim(), funcao: fd.get('funcao'), salario: num(fd.get('salario')), vtDia: num(fd.get('vtDia')), admissao: fd.get('admissao') || null, desligamento: fd.get('desligamento') || null, ativo: !!fd.get('ativo') });
-    await salvarFunc(f); toast('Funcionário salvo'); telaEquipe(mk);
+    Object.assign(f, { nome: fd.get('nome').trim(), funcao: fd.get('funcao'), salario: num(fd.get('salario')), vtDia: num(fd.get('vtDia')), vtDiasPadrao: num(fd.get('vtDiasPadrao')) || null,
+      telefone: fd.get('telefone').trim(), pix: fd.get('pix').trim(), admissao: fd.get('admissao') || null, desligamento: fd.get('desligamento') || null, ativo: !!fd.get('ativo') });
+    await salvarFunc(f); toast('Cadastro salvo'); telaEquipe(mk);
+  });
+  document.querySelectorAll('.fFixo').forEach((fm) => fm.onsubmit = async (ev) => {
+    ev.preventDefault(); const fd = new FormData(fm); const f = S.funcs.find((x) => x.id === fm.dataset.id);
+    (f.fixos = f.fixos || []).push({ desc: fd.get('desc').trim(), sinal: fd.get('sinal'), tipo: fd.get('tipo'), valor: num(fd.get('valor')) });
+    S.fichaAberta = f.id; await salvarFunc(f); toast('Lançamento fixo salvo'); telaEquipe(mk);
   });
   document.getElementById('fNovoFunc').onsubmit = async (ev) => {
     ev.preventDefault(); const nome = new FormData(ev.target).get('nome').trim();
     let id = slug(nome) || 'func'; while (S.funcs.find((f) => f.id === id)) id += '2';
-    const f = { id, nome, funcao: '', salario: S.funcs[0] ? S.funcs[0].salario : 0, vtDia: 22, ativo: true, admissao: hojeISO() };
-    S.funcs.push(f); await salvarFunc(f); toast('Adicionado. Confira salário e admissão.'); telaEquipe(mk);
+    const base = S.funcs.find((x) => x.ativo !== false) || {};
+    const f = { id, nome, funcao: '', salario: base.salario || 0, vtDia: base.vtDia || 22, ativo: true, admissao: hojeISO() };
+    S.funcs.push(f); S.fichaAberta = id; await salvarFunc(f); toast('Adicionado. Confira salário, VT e admissão.'); telaEquipe(mk);
   };
 }
 
@@ -410,6 +517,113 @@ async function telaDemo(mk, id) {
   $app.innerHTML = moldura(corpo, 'Demonstrativo');
 }
 
+// ---------- TELA: despesas ----------
+const nomeCat = (id) => (S.cfg.categorias.find((c) => c.id === id) || {}).nome || (id ? '(tipo removido)' : 'Sem tipo');
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+function porTipo(lista) {
+  const g = {};
+  for (const d of lista) { const k = d.cat || ''; g[k] = g[k] || { nome: d.cat ? nomeCat(d.cat) : (d.desc || 'Sem tipo'), valor: 0, n: 0 }; g[k].valor = C.r2(g[k].valor + C.valorDesp(d)); g[k].n++; }
+  return Object.values(g).sort((a, b) => b.valor - a.valor);
+}
+function agrupar(lista, chave) {
+  const g = {};
+  for (const x of lista) { const k = chave(x); if (!k) continue; g[k] = g[k] || { nome: k, valor: 0, qtd: 0, n: 0, un: x.un || '' }; g[k].valor = C.r2(g[k].valor + (Number(x.valor) || 0)); g[k].qtd += Number(x.qtd) || 0; g[k].n++; }
+  return Object.values(g).sort((a, b) => b.valor - a.valor);
+}
+const barras = (grupos, extra = () => '') => { const max = Math.max(1, ...grupos.map((g) => g.valor)); return `<table class="tab"><tbody>${grupos.map((g) => `<tr><td>${esc(g.nome)}${extra(g)}<div class="mbar"><i style="width:${(g.valor / max) * 100}%"></i></div></td><td class="r">${brl(g.valor)}</td></tr>`).join('')}</tbody></table>`; };
+
+function rascunhoDespesa(mk) {
+  const hoje = hojeISO();
+  return { id: uid(), data: mkDe(hoje) === mk ? hoje : `${mk}-01`, cat: 'produtos', forn: '', desc: '', itens: [], valor: 0, obs: '' };
+}
+
+async function telaDespesas(mk) {
+  const M = await mes(mk);
+  if (S.ctxDesp !== mk) S.despEd = null;
+  S.ctxDesp = mk;
+  const lista = (M.despesas || []).map((d, i) => ({ ...d, _i: i, total: C.valorDesp(d) }));
+  const total = C.r2(lista.reduce((a, d) => a + d.total, 0));
+  const itens = lista.flatMap((d) => (d.itens || []).map((i) => ({ ...i, forn: d.forn })));
+  const ed = S.despEd;
+  const fixasLancadas = lista.some((d) => d.fixa);
+
+  const editor = !ed ? '' : (() => {
+    const d = ed.d;
+    const soma = C.valorDesp(d);
+    return `<section class="card editor" id="editorDesp">
+      <h3>${ed.novo ? 'Nova despesa' : 'Editar despesa'}</h3>
+      <div class="grade2">
+        <label>Data<input type="date" data-ed="data" value="${d.data}"></label>
+        <label>Tipo<select data-ed="cat">${S.cfg.categorias.map((c) => `<option value="${c.id}" ${d.cat === c.id ? 'selected' : ''}>${esc(c.nome)}</option>`).join('')}</select></label>
+      </div>
+      <label>Fornecedor<input data-ed="forn" list="fornList" value="${esc(d.forn)}" placeholder="Escolha ou digite um novo" autocomplete="off"></label>
+      <datalist id="fornList">${S.cfg.fornecedores.map((f) => `<option value="${esc(f.nome)}">${esc(f.obs || '')}</option>`).join('')}</datalist>
+      <label>Descrição (opcional)<input data-ed="desc" value="${esc(d.desc)}" placeholder="Ex.: nota 1234, compra do mês"></label>
+      <h4>Itens / materiais</h4>
+      ${d.itens.map((it, i) => `<div class="item">
+        <input data-edi="${i}" data-k="mat" list="matList" value="${esc(it.mat)}" placeholder="Material" autocomplete="off">
+        <input data-edi="${i}" data-k="qtd" inputmode="decimal" value="${fmtN(it.qtd)}" placeholder="Qtd" class="q">
+        <input data-edi="${i}" data-k="un" value="${esc(it.un || '')}" placeholder="un" class="u">
+        <input data-edi="${i}" data-k="valor" inputmode="decimal" value="${fmtN(it.valor)}" placeholder="R$" class="v">
+        <button class="x" data-act="delItem" data-i="${i}">✕</button></div>`).join('')}
+      <datalist id="matList">${S.cfg.materiais.map((m) => `<option value="${esc(m.nome)}">${m.un ? esc(m.un) : ''}${m.ultimo ? ' · último ' + brl(m.ultimo) : ''}</option>`).join('')}</datalist>
+      <button class="btn link" data-act="addItem">+ Item</button>
+      ${d.itens.length ? `<p class="somaitens">Total da nota: <b id="somaDesp">${brl(soma)}</b></p>`
+        : `<label>Valor total (sem itens)<input data-ed="valor" inputmode="decimal" value="${fmtN(d.valor)}" placeholder="R$"></label><p class="mini">Para compras de material, use "+ Item": o total vira a soma dos itens.</p>`}
+      <label>Observação<input data-ed="obs" value="${esc(d.obs || '')}" placeholder="Forma de pagamento, vencimento…"></label>
+      <div class="linha"><button class="btn grande" data-act="salvarDesp">Salvar</button></div>
+      <div class="linha"><button class="btn link" data-act="cancelarDesp">Cancelar</button>${ed.novo ? '' : '<span style="flex:1"></span><button class="btn link perigo" data-act="excluirDesp">Excluir despesa</button>'}</div>
+    </section>`;
+  })();
+
+  const corpo = `
+  <div class="navdata"><a class="btn ic" href="#/despesas/${somaMes(mk, -1)}">‹</a><b class="titmes">${nomeMes(mk)}</b><a class="btn ic" href="#/despesas/${somaMes(mk, 1)}">›</a></div>
+  <div class="kpis"><div class="kpi"><small>Despesas lançadas</small><b>${brl(total)}</b></div><div class="kpi"><small>Lançamentos</small><b>${lista.length}</b></div></div>
+  ${editor || `<div class="linha"><button class="btn grande" data-act="novaDesp">+ Nova despesa</button></div>
+    ${(S.cfg.despesasFixas || []).length && !fixasLancadas ? `<button class="btn link" data-act="lancarFixas">Lançar despesas fixas do mês (${S.cfg.despesasFixas.map((d) => esc(d.desc)).join(', ')})</button>` : ''}`}
+
+  ${lista.length ? `<section class="card"><h3>Por tipo</h3>${barras(porTipo(lista))}</section>` : ''}
+
+  <section class="card"><h3>Lançamentos</h3>
+    ${lista.length ? `<table class="tab"><tbody>${[...lista].sort((a, b) => (b.data || '').localeCompare(a.data || '')).map((d) => `<tr data-act="editarDesp" data-i="${d._i}" class="clic">
+      <td>${d.data ? dataBR(d.data).slice(0, 5) : ''}</td>
+      <td><b>${esc(d.forn || d.desc || nomeCat(d.cat))}</b><small>${esc(nomeCat(d.cat))}${d.itens && d.itens.length ? ' · ' + d.itens.map((i) => esc(i.mat)).join(', ') : (d.desc && d.forn ? ' · ' + esc(d.desc) : '')}</small></td>
+      <td class="r">${brl(d.total)}</td></tr>`).join('')}</tbody></table>` : '<p class="vazio">Nenhuma despesa lançada neste mês.</p>'}
+    ${(M.despesasLegado || []).length ? `<details><summary class="mini">Despesas importadas da planilha (${brl(M.despesasLegado.reduce((a, d) => a + (Number(d.valor) || 0), 0))})</summary><table class="tab"><tbody>${M.despesasLegado.map((d) => `<tr><td>${esc(d.desc)}${d.obs ? `<small>${esc(d.obs)}</small>` : ''}</td><td class="r">${brl(d.valor)}</td></tr>`).join('')}</tbody></table></details>` : ''}
+  </section>
+
+  ${itens.length ? `<section class="card"><h3>Por material</h3>${barras(agrupar(itens, (i) => i.mat), (g) => `<small>${g.qtd ? `${fmtN(C.r2(g.qtd))} ${esc(g.un)} · ` : ''}${g.n} compra${g.n > 1 ? 's' : ''}</small>`)}</section>` : ''}
+  ${lista.some((d) => d.forn) ? `<section class="card"><h3>Por fornecedor</h3>${barras(agrupar(lista.map((d) => ({ forn: d.forn, valor: d.total })), (x) => x.forn))}</section>` : ''}
+
+  <section class="card"><h3>Cadastros</h3>
+    <details><summary>Fornecedores <small>${S.cfg.fornecedores.length}</small></summary>
+      ${S.cfg.fornecedores.map((f, i) => `<div class="linha"><input data-cad="fornecedores" data-i="${i}" data-k="nome" value="${esc(f.nome)}"><input data-cad="fornecedores" data-i="${i}" data-k="obs" value="${esc(f.obs || '')}" placeholder="Telefone, CNPJ…"><button class="x" data-act="delCad" data-cad="fornecedores" data-i="${i}">✕</button></div>`).join('')}
+      <button class="btn link" data-act="addCad" data-cad="fornecedores">+ Fornecedor</button></details>
+    <details><summary>Tipos de despesa <small>${S.cfg.categorias.length}</small></summary>
+      ${S.cfg.categorias.map((c, i) => `<div class="linha"><input data-cad="categorias" data-i="${i}" data-k="nome" value="${esc(c.nome)}"><button class="x" data-act="delCad" data-cad="categorias" data-i="${i}">✕</button></div>`).join('')}
+      <button class="btn link" data-act="addCad" data-cad="categorias">+ Tipo</button></details>
+    <details><summary>Materiais <small>${S.cfg.materiais.length}</small></summary>
+      ${S.cfg.materiais.map((m, i) => `<div class="linha"><input data-cad="materiais" data-i="${i}" data-k="nome" value="${esc(m.nome)}"><input data-cad="materiais" data-i="${i}" data-k="un" value="${esc(m.un || '')}" placeholder="un" style="max-width:4.5rem"><button class="x" data-act="delCad" data-cad="materiais" data-i="${i}">✕</button></div>`).join('')}
+      <button class="btn link" data-act="addCad" data-cad="materiais">+ Material</button></details>
+    <p class="mini">Fornecedores e materiais novos digitados numa despesa entram aqui sozinhos. Excluir do cadastro não apaga despesas já lançadas.</p>
+  </section>`;
+  $app.innerHTML = moldura(corpo, 'Despesas');
+}
+
+function aprenderCadastros(d) {
+  let mudou = false;
+  if (d.forn && !S.cfg.fornecedores.some((f) => f.nome.toLowerCase() === d.forn.toLowerCase())) { S.cfg.fornecedores.push({ id: uid(), nome: d.forn }); mudou = true; }
+  for (const it of d.itens || []) {
+    if (!it.mat) continue;
+    let m = S.cfg.materiais.find((x) => x.nome.toLowerCase() === it.mat.toLowerCase());
+    if (!m) { m = { id: uid(), nome: it.mat }; S.cfg.materiais.push(m); mudou = true; }
+    if (it.un && !m.un) { m.un = it.un; mudou = true; }
+    if (it.valor && it.qtd) { const u = C.r2(it.valor / it.qtd); if (m.ultimo !== u) { m.ultimo = u; mudou = true; } }
+  }
+  S.cfg.fornecedores.sort((a, b) => a.nome.localeCompare(b.nome)); S.cfg.materiais.sort((a, b) => a.nome.localeCompare(b.nome));
+  return mudou;
+}
+
 // ---------- TELA: Sulgás ----------
 async function telaSulgas(iso) {
   const per = C.periodoSulgas(iso);
@@ -421,12 +635,12 @@ async function telaSulgas(iso) {
     for (const s of M.sulgasLista || []) if (s.data >= per.ini && s.data <= per.fim) itens.push({ ...s, origem: 'planilha' });
     for (const [dd, dia] of Object.entries(M.dias)) {
       const di = `${mk}-${dd}`; if (di < per.ini || di > per.fim) continue;
-      (dia.lav || []).forEach((l) => { if (l.t === 'sulgas') itens.push({ data: di, placa: l.placa || '', valor: l.v }); });
+      (dia.lav || []).forEach((l) => { if (l.t === 'sulgas') itens.push({ data: di, placa: l.placa || '', nome: l.mot || '', valor: l.v }); });
       if (!Array.isArray(dia.lav) && dia.sulgas && !(M.sulgasLista || []).some((s) => s.data === di)) for (let i = 0; i < dia.sulgas; i++) itens.push({ data: di, placa: '(sem placa)', valor: S.cfg.sulgasValor });
     }
   }
   itens.sort((a, b) => a.data.localeCompare(b.data));
-  const nomeDe = (pl) => { const v = S.frota.find((x) => x.placa === pl); return v ? `${v.nome || ''} ${v.modelo ? '· ' + v.modelo : ''}` : ''; };
+  const nomeDe = (pl) => { const v = veiculo(pl); return v ? `${v.nome || ''} ${v.modelo ? '· ' + v.modelo : ''}` : ''; };
   const total = itens.reduce((a, b) => a + (Number(b.valor) || 0), 0);
   const corpo = `
   <div class="navdata"><a class="btn ic" href="#/sulgas/${somaDias(per.ini, -1)}">‹</a><b class="titmes semcap">${dataBR(per.ini).slice(0, 5)} a ${dataBR(per.fim)}</b><a class="btn ic" href="#/sulgas/${somaDias(per.fim, 1)}">›</a></div>
@@ -459,7 +673,7 @@ async function telaAjustes() {
     ${S.store.modo === 'firebase'
       ? `<p>Conectado ao Firebase <b>${esc((lerConfigFirebase() || {}).projectId)}</b> como <b>${esc(u && u.email)}</b>.</p>
          <div class="linha"><button class="btn" data-act="sair">Sair</button><button class="btn link" data-act="desconectar">Desconectar este aparelho</button></div>`
-      : `<p><b>Modo local:</b> os dados ficam só neste aparelho. Para guardar na nuvem e usar em mais de um aparelho, cole aqui a configuração do Firebase (veja o README).</p>
+      : `<p><b>Modo local:</b> os dados ficam só neste aparelho. Toque abaixo para voltar a usar o banco na nuvem.</p>
          <button class="btn" data-act="voltarFirebase">Conectar ao Firebase do estacionamento</button>
          <details><summary class="mini">Usar outro projeto Firebase</summary>
          <textarea id="fbcfg" rows="5" placeholder="const firebaseConfig = { apiKey: ..., projectId: ... }"></textarea>
@@ -485,6 +699,13 @@ async function telaAjustes() {
     </div>
     <button class="btn grande">Salvar regras</button>
   </form>
+
+  <section class="card"><h3>Campos do caixa do dia</h3>
+    <p class="mini">Renomeie, inclua ou tire campos. "Por nome" abre a lista de quem pagou (ex.: mensalistas, convênios). Campos tirados somem do caixa, mas os valores antigos continuam no histórico.</p>
+    ${c.pagamentos.filter((x) => x.ativo !== false).map((x, i) => `<div class="linha campo-cx"><input data-campo-cx="${x.k}" data-k="nome" value="${esc(x.nome)}"><label class="chk mini"><input type="checkbox" data-campo-cx="${x.k}" data-k="detalhar" ${x.detalhar ? 'checked' : ''}> por nome</label>${i ? `<button class="x" data-act="subirCampo" data-k="${x.k}" title="subir">↑</button>` : ''}<button class="x" data-act="offCampo" data-k="${x.k}" title="tirar do caixa">✕</button></div>`).join('')}
+    <button class="btn link" data-act="addCampo">+ Novo campo</button>
+    ${c.pagamentos.some((x) => x.ativo === false) ? `<details><summary class="mini">Campos tirados do caixa</summary>${c.pagamentos.filter((x) => x.ativo === false).map((x) => `<div class="linha"><span style="flex:1">${esc(x.nome)}</span><button class="btn link" data-act="onCampo" data-k="${x.k}">voltar para o caixa</button></div>`).join('')}</details>` : ''}
+  </section>
 
   <section class="card"><h3>Botões de preço das lavagens</h3>
     <p class="mini">Dê nomes (ex.: “Completa SUV”) para lançar mais rápido.</p>
@@ -561,14 +782,101 @@ $app.addEventListener('click', async (ev) => {
     case 'tipo': S.tipoSel = el.dataset.t; telaDia(ctx.iso); break;
     case 'addLav': { const pr = S.cfg.precos[+el.dataset.i]; const t = S.tipoSel; addLav({ t, v: t === 'paga' ? pr.valor : 0, desc: !mesmoRotulo(pr) || t !== 'paga' ? pr.nome : undefined }); break; }
     case 'addOutro': { const v = num(document.getElementById('outroValor').value); if (v > 0) addLav({ t: 'paga', v }); break; }
-    case 'addSulgas': { const pl = (document.getElementById('placaSul').value || '').toUpperCase().trim(); addLav({ t: 'sulgas', v: Number(S.cfg.sulgasValor), placa: pl || undefined }); break; }
+    case 'addSulgas': {
+      const pl = normPlaca(document.getElementById('placaSul').value);
+      if (!pl) { toast('Informe a placa', true); document.getElementById('placaSul').focus(); break; }
+      const v = veiculo(pl);
+      const mot = (document.getElementById('motSul').value || '').trim();
+      const mod = (document.getElementById('modSul').value || '').trim();
+      if (!v || !v.nome) {
+        if (!mot) { toast('Placa sem motorista: informe o motorista', true); mostrarPlaca(); document.getElementById('motSul').focus(); break; }
+        if (v) { v.nome = mot; if (mod && !v.modelo) v.modelo = mod; } else S.frota.push({ placa: pl, nome: mot, ...(mod ? { modelo: mod } : {}) });
+        salvarFrota().catch((e) => toast('Frota não salva: ' + e.message, true));
+      }
+      addLav({ t: 'sulgas', v: Number(S.cfg.sulgasValor), placa: pl, mot: (veiculo(pl) || {}).nome });
+      break;
+    }
+    case 'detToggle': S.detAberto = S.detAberto === el.dataset.k ? null : el.dataset.k; telaDia(ctx.iso); if (S.detAberto) setTimeout(() => { const n = document.getElementById('detNome'); if (n) { n.scrollIntoView({ block: 'center' }); n.focus(); } }, 50); break;
+    case 'addDet': {
+      const k = S.detAberto;
+      const nome = (document.getElementById('detNome').value || '').trim();
+      const valor = num(document.getElementById('detValor').value);
+      const obs = (document.getElementById('detObs').value || '').trim();
+      if (!nome) { toast('Informe o nome', true); break; }
+      if (!(valor > 0)) { toast('Informe o valor pago', true); break; }
+      const d = diaAtual(); d.det = d.det || {}; if (!Array.isArray(d.det[k])) d.det[k] = [];
+      d.det[k].push(obs ? { nome, valor, obs } : { nome, valor });
+      recalcDet(d, k); salvarMes(ctx.mk); lembrarNome(k, nome, valor);
+      telaDia(ctx.iso); setTimeout(() => { const n = document.getElementById('detNome'); if (n) n.focus(); }, 50);
+      break;
+    }
+    case 'delDet': { const d = diaAtual(); d.det[S.detAberto].splice(+el.dataset.i, 1); recalcDet(d, S.detAberto); salvarMes(ctx.mk); telaDia(ctx.iso); break; }
+    case 'addCampo': {
+      const nome = prompt('Nome do novo campo do caixa (ex.: Convênio Hospital):'); if (!nome || !nome.trim()) break;
+      let k = slug(nome) || 'campo'; while (campos().some((c) => c.k === k)) k += '2';
+      campos().push({ k, nome: nome.trim(), ativo: true, detalhar: false }); await salvarCfg(); telaAjustes(); break;
+    }
+    case 'offCampo': { const c = campos().find((x) => x.k === el.dataset.k); if (confirm(`Tirar "${c.nome}" do caixa do dia? Os valores já lançados continuam no histórico e nos totais.`)) { c.ativo = false; await salvarCfg(); telaAjustes(); } break; }
+    case 'onCampo': { const c = campos().find((x) => x.k === el.dataset.k); c.ativo = true; await salvarCfg(); telaAjustes(); break; }
+    case 'subirCampo': { const i = campos().findIndex((x) => x.k === el.dataset.k); if (i > 0) { const l = campos(); [l[i - 1], l[i]] = [l[i], l[i - 1]]; await salvarCfg(); telaAjustes(); } break; }
     case 'delLav': { const d = diaAtual(); d.lav.splice(+el.dataset.i, 1); salvarMes(ctx.mk); telaDia(ctx.iso); break; }
     case 'pres': { const d = diaAtual(); fixarPresenca(d); d.presenca[el.dataset.id] = el.dataset.s; salvarMes(ctx.mk); telaDia(ctx.iso); break; }
     case 'converterDia': { const d = diaAtual(); if (confirm('Os totais deste dia serão apagados para lançar carro a carro. Continuar?')) { delete d.pagas; delete d.valor; delete d.cort; delete d.sulgas; delete d.legado; d.lav = []; salvarMes(ctx.mk); telaDia(ctx.iso); } break; }
-    case 'delDesp': { const M = S.meses[S.ctxMes]; M.despesas.splice(+el.dataset.i, 1); salvarMes(S.ctxMes); telaMes(S.ctxMes); break; }
-    case 'copiarFixas': { const M = S.meses[S.ctxMes]; M.despesas = (S.cfg.despesasFixas || []).map((d) => ({ ...d })); salvarMes(S.ctxMes); telaMes(S.ctxMes); break; }
+    case 'folhaNoApp': {
+      const mk = S.ctxEquipe, M = S.meses[mk];
+      M.folha = M.folha || {};
+      for (const e of M.folhaLegado || []) {
+        const fo = M.folha[e.id] = M.folha[e.id] || {};
+        if (e.salMes) fo.salMes = e.salMes;
+        if (e.diasTrab != null) fo.diasTrab = e.diasTrab;
+        if (e.vtDias != null) fo.vtDias = e.vtDias;
+        if (e.vtDia != null) fo.vtDia = e.vtDia;
+        if (e.descontos && !(fo.descontos || []).length) fo.descontos = [{ desc: e.obs || 'Desconto (planilha)', valor: e.descontos }];
+        if (e.extras && !(fo.extras || []).length) fo.extras = [{ desc: 'Extras (planilha)', valor: e.extras }];
+      }
+      M.folhaApp = true; salvarMes(mk); telaEquipe(mk); break;
+    }
+    case 'folhaVoltar': { const M = S.meses[S.ctxEquipe]; if (confirm('Voltar a mostrar a folha da planilha? Os ajustes feitos no app ficam guardados.')) { M.folhaApp = false; salvarMes(S.ctxEquipe); telaEquipe(S.ctxEquipe); } break; }
+    case 'fixoMes': {
+      const M = S.meses[S.ctxEquipe]; M.folha = M.folha || {}; const fo = M.folha[el.dataset.id] = M.folha[el.dataset.id] || {};
+      const i = +el.dataset.i; fo.fixosOff = fo.fixosOff || [];
+      fo.fixosOff = fo.fixosOff.includes(i) ? fo.fixosOff.filter((x) => x !== i) : [...fo.fixosOff, i];
+      salvarMes(S.ctxEquipe); telaEquipe(S.ctxEquipe); break;
+    }
+    case 'delFixo': { const f = S.funcs.find((x) => x.id === el.dataset.id); if (!confirm(`Remover "${f.fixos[+el.dataset.i].desc}" dos lançamentos fixos?`)) break; f.fixos.splice(+el.dataset.i, 1); S.fichaAberta = f.id; await salvarFunc(f); telaEquipe(S.ctxEquipe); break; }
+    case 'excluirFunc': { const f = S.funcs.find((x) => x.id === el.dataset.id); if (!confirm(`Excluir ${f.nome} do cadastro? O histórico de folhas e presenças continua guardado.`)) break; await S.store.del('funcionarios', f.id); S.funcs = S.funcs.filter((x) => x !== f); telaEquipe(S.ctxEquipe); break; }
     case 'delFolha': { const M = S.meses[S.ctxEquipe]; M.folha[el.dataset.id][el.dataset.k].splice(+el.dataset.i, 1); salvarMes(S.ctxEquipe); telaEquipe(S.ctxEquipe); break; }
     case 'imprimir': window.print(); break;
+    case 'novaDesp': S.despEd = { novo: true, d: rascunhoDespesa(S.ctxDesp) }; telaDespesas(S.ctxDesp); break;
+    case 'editarDesp': { const d = S.meses[S.ctxDesp].despesas[+el.dataset.i]; S.despEd = { novo: false, i: +el.dataset.i, d: JSON.parse(JSON.stringify({ itens: [], ...d })) }; telaDespesas(S.ctxDesp); window.scrollTo(0, 0); break; }
+    case 'cancelarDesp': S.despEd = null; telaDespesas(S.ctxDesp); break;
+    case 'addItem': { const d = S.despEd.d; if (!d.itens.length && d.valor) { d.itens.push({ mat: '', qtd: '', un: '', valor: d.valor }); d.valor = 0; } else d.itens.push({ mat: '', qtd: '', un: '', valor: '' }); telaDespesas(S.ctxDesp); const n = document.querySelectorAll('[data-k=mat]'); if (n.length) n[n.length - 1].focus(); break; }
+    case 'delItem': S.despEd.d.itens.splice(+el.dataset.i, 1); telaDespesas(S.ctxDesp); break;
+    case 'salvarDesp': {
+      const mk = S.ctxDesp, M = S.meses[mk], ed = S.despEd, d = ed.d;
+      d.itens = d.itens.filter((i) => i.mat || num(i.valor)).map((i) => ({ mat: (i.mat || '').trim(), ...(num(i.qtd) ? { qtd: num(i.qtd) } : {}), ...(i.un ? { un: i.un.trim() } : {}), valor: num(i.valor) }));
+      if (d.itens.some((i) => !i.mat)) { toast('Há item sem nome do material', true); break; }
+      d.forn = (d.forn || '').trim(); d.desc = (d.desc || '').trim();
+      d.valor = C.valorDesp(d);
+      if (!(d.valor > 0)) { toast('Informe o valor ou os itens', true); break; }
+      if (!d.itens.length) delete d.itens;
+      const destino = mkDe(d.data || `${mk}-01`);
+      if (!ed.novo) M.despesas.splice(ed.i, 1);
+      const Md = await mes(destino); Md.despesas = Md.despesas || []; Md.despesas.push(d);
+      salvarMes(mk); if (destino !== mk) salvarMes(destino);
+      if (aprenderCadastros(d)) await salvarCfg();
+      S.despEd = null; toast(destino !== mk ? `Despesa salva em ${nomeMes(destino)}` : 'Despesa salva'); telaDespesas(mk); break;
+    }
+    case 'excluirDesp': { if (!confirm('Excluir esta despesa?')) break; S.meses[S.ctxDesp].despesas.splice(S.despEd.i, 1); salvarMes(S.ctxDesp); S.despEd = null; telaDespesas(S.ctxDesp); break; }
+    case 'lancarFixas': {
+      const mk = S.ctxDesp, M = S.meses[mk];
+      const achaCat = (desc) => { const w = desc.toLowerCase().split(/[\s/]+/)[0]; return (S.cfg.categorias.find((c) => c.nome.toLowerCase().includes(w)) || {}).id || 'outros'; };
+      M.despesas = M.despesas || [];
+      for (const f of S.cfg.despesasFixas) M.despesas.push({ id: uid(), data: `${mk}-01`, cat: f.cat || achaCat(f.desc), forn: '', desc: f.desc, valor: Number(f.valor) || 0, fixa: true });
+      salvarMes(mk); telaDespesas(mk); break;
+    }
+    case 'addCad': { const k = el.dataset.cad; const nome = prompt({ fornecedores: 'Nome do fornecedor:', categorias: 'Nome do tipo de despesa:', materiais: 'Nome do material:' }[k]); if (!nome || !nome.trim()) break; S.cfg[k].push({ id: k === 'categorias' ? (slug(nome) || uid()) + (S.cfg.categorias.some((c) => c.id === slug(nome)) ? uid().slice(-3) : '') : uid(), nome: nome.trim() }); S.cfg[k].sort((a, b) => a.nome.localeCompare(b.nome)); await salvarCfg(); telaDespesas(S.ctxDesp); break; }
+    case 'delCad': { const k = el.dataset.cad, i = +el.dataset.i; if (!confirm(`Excluir "${S.cfg[k][i].nome}" do cadastro? Despesas já lançadas não mudam.`)) break; S.cfg[k].splice(i, 1); await salvarCfg(); telaDespesas(S.ctxDesp); break; }
     case 'delVeic': if (confirm('Remover veículo?')) { S.frota.splice(+el.dataset.i, 1); await salvarFrota(); telaSulgas(S.ctxSul.iso); } break;
     case 'copiarSulgas': {
       const { itens, per } = S.ctxSul;
@@ -602,8 +910,28 @@ async function redesenhar(fn) {
   if (sel) { const n = document.querySelector(sel); if (n) { n.focus(); if (n.select) n.select(); } }
 }
 
+$app.addEventListener('input', (ev) => {
+  const el = ev.target;
+  if (S.despEd && (el.dataset.ed || el.dataset.edi != null)) {
+    const d = S.despEd.d;
+    if (el.dataset.ed) d[el.dataset.ed] = el.dataset.ed === 'valor' ? num(el.value) : el.value;
+    else {
+      const it = d.itens[+el.dataset.edi]; it[el.dataset.k] = el.value;
+      if (el.dataset.k === 'mat') { const m = S.cfg.materiais.find((x) => x.nome === el.value); const u = el.parentNode.querySelector('[data-k=un]'); if (m && m.un && u && !u.value) { u.value = m.un; it.un = m.un; } }
+      const sm = document.getElementById('somaDesp'); if (sm) sm.textContent = brl(C.valorDesp({ itens: d.itens.map((i) => ({ valor: num(i.valor) })) }));
+    }
+    return;
+  }
+  if (ev.target.id === 'placaSul') { mostrarPlaca(); return; }
+  if (ev.target.id !== 'detNome') return;
+  const m = ((S.cfg.nomes || {})[S.detAberto] || []).find((x) => x.nome === ev.target.value);
+  const v = document.getElementById('detValor');
+  if (m && v && !v.value) v.value = fmtN(m.valor);
+});
+
 $app.addEventListener('change', async (ev) => {
   const el = ev.target;
+  if (['detNome', 'detValor', 'detObs', 'placaSul', 'motSul', 'modSul'].includes(el.id)) return;
   if (el.dataset.act === 'irData' && el.value) { location.hash = '#/hoje/' + el.value; return; }
   if (el.dataset.pg && S.ctxDia) {
     const d = diaAtual(); d.pg = d.pg || {}; const v = num(el.value);
@@ -621,6 +949,17 @@ $app.addEventListener('change', async (ev) => {
     M.folha[id][k] = k === 'obs' ? el.value : num(el.value);
     salvarMes(mk); if (k !== 'obs') redesenhar(() => telaEquipe(mk)); return;
   }
+  if (el.dataset.ed || el.dataset.edi != null) return;
+  if (el.dataset.cad) {
+    const item = S.cfg[el.dataset.cad][+el.dataset.i];
+    const v = el.value.trim(); if (el.dataset.k === 'nome' && !v) { el.value = item.nome; return; }
+    item[el.dataset.k] = v; await salvarCfg(); status('Salvo ✓'); return;
+  }
+  if (el.dataset.campoCx) {
+    const c = campos().find((x) => x.k === el.dataset.campoCx);
+    if (el.dataset.k === 'nome') { if (el.value.trim()) c.nome = el.value.trim(); } else c.detalhar = el.checked;
+    await salvarCfg(); status('Salvo ✓'); return;
+  }
   if (el.dataset.preco != null) { const p = S.cfg.precos[+el.dataset.preco]; p[el.dataset.k] = el.dataset.k === 'valor' ? num(el.value) : el.value; await salvarCfg(); status('Salvo ✓'); return; }
   if (el.dataset.fixa != null) { const p = S.cfg.despesasFixas[+el.dataset.fixa]; p[el.dataset.k] = el.dataset.k === 'valor' ? num(el.value) : el.value; await salvarCfg(); status('Salvo ✓'); return; }
 });
@@ -628,8 +967,9 @@ $app.addEventListener('change', async (ev) => {
 // Enter no campo de placa/valor adiciona direto
 $app.addEventListener('keydown', (ev) => {
   if (ev.key !== 'Enter') return;
-  if (ev.target.id === 'placaSul') { ev.preventDefault(); document.querySelector('[data-act=addSulgas]').click(); }
+  if (['placaSul', 'motSul', 'modSul'].includes(ev.target.id)) { ev.preventDefault(); document.querySelector('[data-act=addSulgas]').click(); }
   if (ev.target.id === 'outroValor') { ev.preventDefault(); document.querySelector('[data-act=addOutro]').click(); }
+  if (['detNome', 'detValor', 'detObs'].includes(ev.target.id)) { ev.preventDefault(); document.querySelector('[data-act=addDet]').click(); }
 });
 
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('./sw.js');
