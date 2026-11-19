@@ -1,7 +1,7 @@
 import * as C from './calc.js';
 import { criarStore, salvarConfigFirebase, interpretarConfig, lerConfigFirebase, usarFirebasePadrao } from './store.js';
 
-const VERSAO = '1.7.0';
+const VERSAO = '1.7.1';
 const $app = document.getElementById('app');
 const S = { store: null, cfg: null, funcs: [], frota: [], meses: {}, tipoSel: 'paga', salvando: 0 };
 
@@ -32,7 +32,13 @@ function status(txt) { const el = document.getElementById('status'); if (el) el.
 
 // ---------- dados ----------
 async function mes(mk) {
-  if (!S.meses[mk]) S.meses[mk] = (await S.store.get('meses', mk)) || { dias: {} };
+  if (!S.meses[mk]) {
+    S.meses[mk] = (await S.store.get('meses', mk)) || { dias: {} };
+    // Alex é pró-labore: corrige lançamentos fixos antigos que entraram como "Outros"
+    let fix = false;
+    for (const d of S.meses[mk].despesas || []) if (d.fixa && d.cat === 'outros' && /\balex\b/i.test(d.desc || '')) { d.cat = 'prolabore'; fix = true; }
+    if (fix) salvarMes(mk);
+  }
   if (!S.meses[mk].dias) S.meses[mk].dias = {};
   return S.meses[mk];
 }
@@ -72,6 +78,7 @@ async function carregarBase() {
   if (!Array.isArray(S.cfg.categorias) || !S.cfg.categorias.length) S.cfg.categorias = CATEGORIAS_PADRAO();
   S.cfg.fornecedores = S.cfg.fornecedores || [];
   S.cfg.materiais = S.cfg.materiais || [];
+  if (S.cfg.categorias.some((c) => c.id === 'prolabore')) for (const f of S.cfg.despesasFixas || []) if (!f.cat && /\balex\b/i.test(f.desc || '')) f.cat = 'prolabore';
   S.funcs = await S.store.list('funcionarios');
   S.frota = ((await S.store.get('frota', 'lista')) || {}).veiculos || [];
   S.meses = {};
@@ -532,6 +539,14 @@ function agrupar(lista, chave) {
 }
 const barras = (grupos, extra = () => '') => { const max = Math.max(1, ...grupos.map((g) => g.valor)); return `<table class="tab"><tbody>${grupos.map((g) => `<tr><td>${esc(g.nome)}${extra(g)}<div class="mbar"><i style="width:${(g.valor / max) * 100}%"></i></div></td><td class="r">${brl(g.valor)}</td></tr>`).join('')}</tbody></table>`; };
 
+function catFixa(f) {
+  if (f.cat && S.cfg.categorias.some((c) => c.id === f.cat)) return f.cat;
+  const d = (f.desc || '').toLowerCase();
+  if (/\balex\b|pr[oó][- ]?labore|retirada/.test(d)) return 'prolabore';
+  const w = d.split(/[\s/]+/)[0];
+  return (S.cfg.categorias.find((c) => w && c.nome.toLowerCase().includes(w)) || {}).id || 'outros';
+}
+
 function rascunhoDespesa(mk) {
   const hoje = hojeISO();
   return { id: uid(), data: mkDe(hoje) === mk ? hoje : `${mk}-01`, cat: 'produtos', forn: '', desc: '', itens: [], valor: 0, obs: '' };
@@ -715,7 +730,8 @@ async function telaAjustes() {
 
   <section class="card"><h3>Despesas fixas do mês</h3>
     <p class="mini">Viram um botão no painel do mês para lançar tudo de uma vez.</p>
-    ${(c.despesasFixas || []).map((d, i) => `<div class="linha"><input data-fixa="${i}" data-k="desc" value="${esc(d.desc)}"><input data-fixa="${i}" data-k="valor" inputmode="decimal" value="${fmtN(d.valor)}" style="max-width:6rem"><button class="x" data-act="delFixa" data-i="${i}">✕</button></div>`).join('')}
+    ${(c.despesasFixas || []).map((d, i) => `<div class="fixa"><div class="linha"><input data-fixa="${i}" data-k="desc" value="${esc(d.desc)}"><input data-fixa="${i}" data-k="valor" inputmode="decimal" value="${fmtN(d.valor)}" style="max-width:6rem"><button class="x" data-act="delFixa" data-i="${i}">✕</button></div>
+      <select data-fixa="${i}" data-k="cat">${c.categorias.map((ct) => `<option value="${ct.id}" ${catFixa(d) === ct.id ? 'selected' : ''}>${esc(ct.nome)}</option>`).join('')}</select></div>`).join('')}
     <button class="btn link" data-act="addFixa">+ Nova despesa fixa</button>
   </section>
 
@@ -870,9 +886,8 @@ $app.addEventListener('click', async (ev) => {
     case 'excluirDesp': { if (!confirm('Excluir esta despesa?')) break; S.meses[S.ctxDesp].despesas.splice(S.despEd.i, 1); salvarMes(S.ctxDesp); S.despEd = null; telaDespesas(S.ctxDesp); break; }
     case 'lancarFixas': {
       const mk = S.ctxDesp, M = S.meses[mk];
-      const achaCat = (desc) => { const w = desc.toLowerCase().split(/[\s/]+/)[0]; return (S.cfg.categorias.find((c) => c.nome.toLowerCase().includes(w)) || {}).id || 'outros'; };
       M.despesas = M.despesas || [];
-      for (const f of S.cfg.despesasFixas) M.despesas.push({ id: uid(), data: `${mk}-01`, cat: f.cat || achaCat(f.desc), forn: '', desc: f.desc, valor: Number(f.valor) || 0, fixa: true });
+      for (const f of S.cfg.despesasFixas) M.despesas.push({ id: uid(), data: `${mk}-01`, cat: catFixa(f), forn: '', desc: f.desc, valor: Number(f.valor) || 0, fixa: true });
       salvarMes(mk); telaDespesas(mk); break;
     }
     case 'addCad': { const k = el.dataset.cad; const nome = prompt({ fornecedores: 'Nome do fornecedor:', categorias: 'Nome do tipo de despesa:', materiais: 'Nome do material:' }[k]); if (!nome || !nome.trim()) break; S.cfg[k].push({ id: k === 'categorias' ? (slug(nome) || uid()) + (S.cfg.categorias.some((c) => c.id === slug(nome)) ? uid().slice(-3) : '') : uid(), nome: nome.trim() }); S.cfg[k].sort((a, b) => a.nome.localeCompare(b.nome)); await salvarCfg(); telaDespesas(S.ctxDesp); break; }
