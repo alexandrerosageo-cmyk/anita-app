@@ -1,9 +1,10 @@
 import * as C from './calc.js';
 import { montarPlanilha, nomeArquivoBackup } from './planilha.js';
+import * as A from './analise.js';
 import { EMAIL_BACKUP } from './firebase-config.js';
 import { criarStore, salvarConfigFirebase, interpretarConfig, lerConfigFirebase, usarFirebasePadrao } from './store.js';
 
-const VERSAO = '1.8.0';
+const VERSAO = '1.9.0';
 const $app = document.getElementById('app');
 const S = { store: null, cfg: null, funcs: [], frota: [], meses: {}, tipoSel: 'paga', salvando: 0 };
 
@@ -132,6 +133,7 @@ async function rotear() {
     else if (rota === 'demo') await telaDemo(a, b);
     else if (rota === 'sulgas') await telaSulgas(a || hojeISO());
     else if (rota === 'despesas') await telaDespesas(a || mkDe(hojeISO()));
+    else if (rota === 'analise') await telaAnalise(a || 'mes', b || `${mkDe(hojeISO())}-01`);
     else if (rota === 'ajustes') await telaAjustes();
     else location.hash = '#/hoje';
   } catch (e) { console.error(e); $app.innerHTML = moldura(`<div class="card erro">Erro: ${esc(e.message)}</div>`); }
@@ -140,8 +142,8 @@ async function rotear() {
 
 function moldura(corpo, titulo) {
   const r = S.rota;
-  const nav = [['hoje', '📝', 'Hoje'], ['mes', '📊', 'Mês'], ['equipe', '👥', 'Equipe'], ['despesas', '🧾', 'Despesas'], ['sulgas', '🚐', 'Sulgás'], ['ajustes', '⚙️', 'Ajustes']];
-  return `<header class="topo"><div><b>Estacionamento Anita</b>${titulo ? `<small>${titulo}</small>` : ''}</div><span id="status" class="status">${S.store.modo === 'local' ? 'modo local' : ''}</span></header>
+  const nav = [['hoje', '📝', 'Hoje'], ['mes', '📊', 'Mês'], ['analise', '📈', 'Análise'], ['equipe', '👥', 'Equipe'], ['despesas', '🧾', 'Despesas'], ['sulgas', '🚐', 'Sulgás']];
+  return `<header class="topo"><div><b>Estacionamento Anita</b>${titulo ? `<small>${titulo}</small>` : ''}</div><span class="topo-dir"><span id="status" class="status">${S.store.modo === 'local' ? 'modo local' : ''}</span><a href="#/ajustes" class="engrenagem ${r === 'ajustes' ? 'ativo' : ''}" aria-label="Ajustes">⚙️</a></span></header>
   <main>${corpo}</main>
   <nav class="nav">${nav.map(([k, i, t]) => `<a href="#/${k}" class="${r === k || (r === 'demo' && k === 'equipe') ? 'ativo' : ''}"><span>${i}</span>${t}</a>`).join('')}</nav>`;
 }
@@ -528,6 +530,98 @@ async function telaDemo(mk, id) {
   $app.innerHTML = moldura(corpo, 'Demonstrativo');
 }
 
+// ---------- TELA: análise ----------
+async function carregarTodosMeses() {
+  if (S.todosCarregados) return;
+  for (const m of await S.store.list('meses')) { const { id, ...r } = m; if (!S.meses[id]) S.meses[id] = { dias: {}, ...r }; }
+  S.todosCarregados = true;
+}
+const pctVar = (a, b) => (b ? Math.round(((a - b) / Math.abs(b)) * 100) : null);
+const seta = (v, inverso) => v == null ? '' : `<span class="var ${(inverso ? -v : v) >= 0 ? 'pos' : 'neg'}">${v > 0 ? '▲' : v < 0 ? '▼' : '='} ${Math.abs(v)}%</span>`;
+
+function graficoBarras(itens, { valor, rotulo, fmt = (v) => v, destaque = () => false, alt = 150 }) {
+  const n = itens.length; if (!n) return '';
+  const w = Math.max(18, Math.min(60, 320 / n)), max = Math.max(...itens.map(valor), 1), h = alt;
+  return `<svg class="grafico barras" viewBox="0 0 ${n * w} ${h + 26}" preserveAspectRatio="none">${itens.map((it, i) => {
+    const v = valor(it), bh = (v / max) * (h - 16);
+    return `<rect class="${destaque(it) ? 'n3' : 'n1'}" x="${i * w + 3}" y="${h - bh}" width="${w - 6}" height="${bh}" rx="2"><title>${esc(rotulo(it))}: ${esc(fmt(v))}</title></rect>
+      ${n <= 16 ? `<text x="${i * w + w / 2}" y="${h - bh - 3}" class="val">${esc(fmt(v))}</text>` : ''}
+      <text x="${i * w + w / 2}" y="${h + 12}">${esc(rotulo(it))}</text>`;
+  }).join('')}</svg>`;
+}
+
+async function telaAnalise(tipo, ref) {
+  status('Carregando…'); await carregarTodosMeses(); status('');
+  let ini, fim, rotulo;
+  if (tipo === 'per') { [ini, fim] = ref.split('~'); if (!fim || fim < ini) fim = ini; rotulo = `${dataBR(ini)} a ${dataBR(fim)}`; }
+  else { const p = A.periodo(tipo, ref); ini = p.ini; fim = p.fim; rotulo = p.rotulo || nomeMes(mkDe(ini)); }
+  const an = A.analisar(ini, fim, S.meses, S.cfg, S.funcs);
+  const pa = A.anterior(ini, fim, tipo);
+  const ant = A.analisar(pa.ini, pa.fim, S.meses, S.cfg, S.funcs);
+  const t = an.tot, ta = ant.tot;
+  const kpi = (nome, v, va, fmt = brl, inverso) => `<div class="kpi"><small>${nome}</small><b>${fmt(v)}</b>${ta.dias ? seta(pctVar(v, va), inverso) : ''}</div>`;
+  const nf = (v) => String(v).replace('.', ',');
+  const porDowUteis = an.porDow.filter((d) => d.i >= 1 && d.i <= 5);
+  const fracos = [...porDowUteis].sort((a, b) => a.carros - b.carros || a.avulso - b.avulso);
+  const nomeCampo = (k) => ((S.cfg.pagamentos || []).find((c) => c.k === k) || {}).nome || k;
+  const totCampos = Object.values(an.campos).reduce((a, b) => a + b, 0) || 1;
+  const navAlvo = (n) => tipo === 'per' ? null : `#/analise/${tipo}/${A.deslocar(tipo, ini, n)}`;
+
+  const corpo = `
+  <div class="seg periodo">${[['mes', 'Mês'], ['tri', 'Trimestre'], ['ano', 'Ano'], ['per', 'Período']].map(([k, n]) => `<button data-act="anTipo" data-t="${k}" class="${tipo === k ? 'on' : ''}">${n}</button>`).join('')}</div>
+  ${tipo === 'per' ? `<div class="linha"><input type="date" id="anIni" value="${ini}"><span>a</span><input type="date" id="anFim" value="${fim}"><button class="btn" data-act="anAplicar">ok</button></div>`
+    : `<div class="navdata"><a class="btn ic" href="${navAlvo(-1)}">‹</a><b class="titmes">${esc(rotulo)}</b><a class="btn ic" href="${navAlvo(1)}">›</a></div>`}
+  ${!t.dias ? '<section class="card"><p class="vazio">Sem movimento registrado neste período.</p></section>' : `
+  <p class="mini centro">${t.dias} dias com movimento${ta.dias ? ` · comparação com ${pa.rotulo || `${dataBR(pa.ini)} a ${dataBR(pa.fim)}`}` : ''}</p>
+  <div class="kpis seis">
+    ${kpi('Receita', t.receita, ta.receita)}
+    ${kpi('Ao contador', t.aoContador, ta.aoContador)}
+    ${kpi('Estacionamento', t.estacionamento, ta.estacionamento)}
+    ${kpi('Lavagens pagas', t.valorPagas, ta.valorPagas)}
+    ${kpi('Carros lavados', t.contados, ta.contados, (v) => String(v))}
+    ${kpi('Média por dia', t.mediaCarros, ta.mediaCarros, (v) => nf(v) + ' carros')}
+    ${kpi('Ticket médio lavagem', t.ticket, ta.ticket)}
+    ${an.res.mesesInteiros ? kpi('Resultado', C.r2(an.res.resultado), ant.res.mesesInteiros ? C.r2(ant.res.resultado) : 0) : `<div class="kpi"><small>Resultado</small><b>—</b><small>só com meses inteiros</small></div>`}
+  </div>
+
+  <section class="card"><h3>Movimento por dia da semana <small>média por dia aberto</small></h3>
+    ${graficoBarras(an.porDow, { valor: (d) => d.carros, rotulo: (d) => d.nome.slice(0, 3), fmt: nf, destaque: (d) => d.carros === Math.max(...an.porDow.map((x) => x.carros)) })}
+    <table class="tab"><thead><tr><th>Dia</th><th>Carros</th><th>Caixa avulso</th><th>Estac. avulso</th><th>Meta ${S.cfg.metaDia}+</th></tr></thead><tbody>
+    ${an.porDow.map((d) => `<tr><td>${d.nome}<small>${d.n} dias</small></td><td><b>${nf(d.carros)}</b></td><td>${brl(d.avulso)}</td><td>${brl(d.estAvulso)}</td><td>${d.i === 6 ? '—' : `${Math.round((d.metaBatida / d.n) * 100)}%`}</td></tr>`).join('')}
+    </tbody></table>
+    <p class="mini">Caixa avulso = dinheiro + PIX + cartões do dia (sem mensalistas, convênios e faturas, que caem em datas de cobrança). Estac. avulso = caixa avulso − lavagens pagas.</p>
+    ${fracos.length >= 2 ? `<div class="dica"><b>Para a escala 5x2:</b> os dias úteis mais fortes são <b>${[...fracos].reverse().slice(0, 2).map((d) => d.nome.toLowerCase()).join(' e ')}</b> (equipe completa). Os mais fracos, ${fracos.slice(0, 2).map((d) => `<b>${d.nome.toLowerCase()}</b> (${nf(d.carros)} carros/dia)`).join(' e ')}, são os melhores candidatos a folgas. Sábado (9h30–15h30) tem média de ${nf((an.porDow.find((d) => d.i === 6) || { carros: 0 }).carros)} carros.</div>` : ''}
+  </section>
+
+  <section class="card"><h3>Evolução</h3>
+    ${an.porMes.length > 1
+      ? graficoBarras(an.porMes, { valor: (m) => m.contados, rotulo: (m) => `${m.mk.slice(5)}/${m.mk.slice(2, 4)}`, fmt: (v) => String(v), destaque: (m) => m.contados === Math.max(...an.porMes.map((x) => x.contados)) })
+        + `<table class="tab"><thead><tr><th>Mês</th><th>Carros</th><th>Receita</th><th>Lavagens</th><th>Resultado</th></tr></thead><tbody>${an.porMes.map((m) => `<tr data-href="#/mes/${m.mk}"><td>${nomeMes(m.mk).replace(/ (\d{4})$/, '/$1').slice(0, 3)}/${m.mk.slice(2, 4)}</td><td>${m.contados}</td><td>${brl(m.receita)}</td><td>${brl(m.valorPagas)}</td><td class="${m.resultado < 0 ? 'neg' : ''}">${m.resultado == null ? '<small>parcial</small>' : brl(m.resultado)}</td></tr>`).join('')}</tbody></table>`
+      : graficoBarras(an.dias, { valor: (d) => d.contados, rotulo: (d) => String(Number(d.iso.slice(8))), fmt: (v) => String(v), destaque: (d) => d.contados >= (Number(S.cfg.metaDia) || 10) })}
+  </section>
+
+  <section class="card"><h3>Destaques</h3>
+    <h4>Dias com mais carros lavados</h4>
+    <table class="tab"><tbody>${an.topCarros.map((d) => `<tr data-href="#/hoje/${d.iso}"><td>${dataBR(d.iso)} <small>${A.DOW[d.dow]}</small></td><td class="r"><b>${d.contados}</b> carros</td><td class="r">${brl(d.valorPagas)}</td></tr>`).join('')}</tbody></table>
+    <h4>Dias de maior movimento no caixa (avulso)</h4>
+    <table class="tab"><tbody>${an.topAvulso.map((d) => `<tr data-href="#/hoje/${d.iso}"><td>${dataBR(d.iso)} <small>${A.DOW[d.dow]}</small></td><td class="r"><b>${brl(d.avulso)}</b></td><td class="r">${d.contados} carros</td></tr>`).join('')}</tbody></table>
+    <h4>Dias úteis mais fracos</h4>
+    <table class="tab"><tbody>${an.fracosUteis.map((d) => `<tr data-href="#/hoje/${d.iso}"><td>${dataBR(d.iso)} <small>${A.DOW[d.dow]}</small></td><td class="r">${d.contados} carro${d.contados === 1 ? "" : "s"}</td><td class="r">${brl(d.avulso)}</td></tr>`).join('')}</tbody></table>
+    <p class="mini">Meta da equipe (${S.cfg.metaDia}+ carros) batida em ${an.metaBatida} de ${an.dias.filter((d) => d.dow !== 6).length} dias úteis.</p>
+  </section>
+
+  <section class="card"><h3>Lavagens <small>${t.contados} contadas</small></h3>
+    <p>Pagas <b>${t.pagas}</b> · Sulgás <b>${t.sulgas}</b> · Cortesias <b>${t.cort}</b>${t.retornos ? ` · Retornos <b>${t.retornos}</b>` : ''}</p>
+    ${an.servicos.length ? `<table class="tab"><thead><tr><th>Serviço / preço</th><th>Qtd</th><th>Total</th></tr></thead><tbody>${an.servicos.slice(0, 10).map((x) => `<tr><td>${esc(x.nome || brl(x.valor))}</td><td>${x.n}</td><td>${brl(x.total)}</td></tr>`).join('')}</tbody></table>` : '<p class="mini">O detalhamento por serviço aparece para as lavagens lançadas carro a carro no app.</p>'}
+  </section>
+
+  <section class="card"><h3>Formas de recebimento</h3>
+    ${barras(Object.entries(an.campos).sort((a, b) => b[1] - a[1]).map(([k, v]) => ({ nome: nomeCampo(k), valor: v })), (g) => `<small>${Math.round((g.valor / totCampos) * 100)}% da receita</small>`)}
+  </section>`}`;
+  $app.innerHTML = moldura(corpo, 'Análise');
+  S.ctxAn = { tipo, ini, fim };
+}
+
 // ---------- TELA: despesas ----------
 const nomeCat = (id) => (S.cfg.categorias.find((c) => c.id === id) || {}).nome || (id ? '(tipo removido)' : 'Sem tipo');
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
@@ -897,6 +991,8 @@ $app.addEventListener('click', async (ev) => {
     case 'excluirFunc': { const f = S.funcs.find((x) => x.id === el.dataset.id); if (!confirm(`Excluir ${f.nome} do cadastro? O histórico de folhas e presenças continua guardado.`)) break; await S.store.del('funcionarios', f.id); S.funcs = S.funcs.filter((x) => x !== f); telaEquipe(S.ctxEquipe); break; }
     case 'delFolha': { const M = S.meses[S.ctxEquipe]; M.folha[el.dataset.id][el.dataset.k].splice(+el.dataset.i, 1); salvarMes(S.ctxEquipe); telaEquipe(S.ctxEquipe); break; }
     case 'imprimir': window.print(); break;
+    case 'anTipo': { const t = el.dataset.t, c = S.ctxAn; location.hash = t === 'per' ? `#/analise/per/${c.ini}~${c.fim}` : `#/analise/${t}/${c.ini}`; break; }
+    case 'anAplicar': { const i = document.getElementById('anIni').value, f = document.getElementById('anFim').value; if (i && f) location.hash = `#/analise/per/${i <= f ? i + '~' + f : f + '~' + i}`; break; }
     case 'toggleContador': S.contadorAberto = !S.contadorAberto; telaMes(S.ctxMes); break;
     case 'novaDesp': S.despEd = { novo: true, d: rascunhoDespesa(S.ctxDesp) }; telaDespesas(S.ctxDesp); break;
     case 'editarDesp': { const d = S.meses[S.ctxDesp].despesas[+el.dataset.i]; S.despEd = { novo: false, i: +el.dataset.i, d: JSON.parse(JSON.stringify({ itens: [], ...d })) }; telaDespesas(S.ctxDesp); window.scrollTo(0, 0); break; }

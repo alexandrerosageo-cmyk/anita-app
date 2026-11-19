@@ -171,3 +171,15 @@ tr.riscado .btn { text-decoration: none; }
 .fixa { border-bottom: 1px solid var(--borda); padding-bottom: .5rem; margin-bottom: .4rem; }
 .fixa select { font-size: .85rem; padding: .4rem .5rem; }
 .kpi.clic { cursor: pointer; }
+
+.topo-dir { display: flex; align-items: center; gap: .6rem; }
+.engrenagem { font-size: 1.3rem; text-decoration: none; filter: grayscale(1) brightness(2); opacity: .8; }
+.engrenagem.ativo { filter: none; opacity: 1; }
+.seg.periodo { margin-bottom: .6rem; }
+.centro { text-align: center; }
+.var { display: block; font-size: .72rem; font-weight: 600; }
+.var.pos { color: var(--ok); } .var.neg { color: var(--erro); }
+.grafico.barras { height: 170px; }
+.grafico.barras text.val { font-size: 9px; fill: var(--texto); font-weight: 600; }
+.dica { background: #eaf6ef; border-left: 4px solid var(--ok); padding: .6rem .7rem; border-radius: 8px; font-size: .9rem; margin-top: .6rem; }
+small.hora { display: inline; color: var(--suave); font-variant-numeric: tabular-nums; }
