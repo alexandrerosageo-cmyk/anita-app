@@ -70,6 +70,15 @@ A configuração do projeto `anita-estacionamento` já está no código (`js/sto
 - **iPhone (Safari)**: toque em Compartilhar → **Adicionar à Tela de Início**.
 - **Android (Chrome)**: menu ⋮ → **Instalar app** (ou **Adicionar à tela inicial**).
 
+## Backup em Excel
+
+- **Na hora:** no app, abra **Ajustes → Backup em Excel** e escolha **Baixar Excel** ou **Enviar por e-mail**. No celular, "Enviar por e-mail" abre o compartilhamento.
+- **Automático todo dia 15:** o GitHub Actions (`.github/workflows/backup.yml`) gera o mesmo Excel e envia para anitaparkingpoa@gmail.com.
+  - Para enviar na hora, abra **Actions → Backup mensal por e-mail → Run workflow**.
+  - Ele precisa de 3 segredos em **Settings → Secrets and variables → Actions**:
+    - `APP_EMAIL` e `APP_SENHA`: o login do app.
+    - `GMAIL_SENHA_APP`: senha de app do Gmail anitaparkingpoa@gmail.com, criada em myaccount.google.com/apppasswords (a verificação em 2 etapas precisa estar ativa).
+
 ## Incluir os sócios depois
 
 1. Crie o login de cada sócio em Authentication → Usuários.

@@ -1,0 +1,36 @@
+name: Backup mensal por e-mail
+
+on:
+  schedule:
+    - cron: '17 11 15 * *'   # todo dia 15, por volta das 8h15 de Brasília
+  workflow_dispatch:          # botão "Run workflow" para enviar na hora
+
+permissions:
+  contents: write             # para registrar a data do último envio (mantém o agendamento ativo)
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund --omit=dev
+      - name: Gerar Excel e enviar por e-mail
+        run: node scripts/backup-email.mjs
+        env:
+          APP_EMAIL: ${{ secrets.APP_EMAIL }}
+          APP_SENHA: ${{ secrets.APP_SENHA }}
+          GMAIL_SENHA_APP: ${{ secrets.GMAIL_SENHA_APP }}
+      # O GitHub pausa agendamentos de repositórios sem commits por 60 dias.
+      # Registrar a data do envio mantém o backup mensal funcionando.
+      - name: Registrar envio
+        run: |
+          date -u +"%Y-%m-%d %H:%M UTC" > ultimo-backup.txt
+          git config user.name "backup-automatico"
+          git config user.email "backup-automatico@users.noreply.github.com"
+          git add ultimo-backup.txt
+          git commit -m "Backup enviado em $(date -u +%Y-%m-%d)" || true
+          git push || true

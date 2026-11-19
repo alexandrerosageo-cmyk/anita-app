@@ -1,7 +1,9 @@
 import * as C from './calc.js';
+import { montarPlanilha, nomeArquivoBackup } from './planilha.js';
+import { EMAIL_BACKUP } from './firebase-config.js';
 import { criarStore, salvarConfigFirebase, interpretarConfig, lerConfigFirebase, usarFirebasePadrao } from './store.js';
 
-const VERSAO = '1.7.3';
+const VERSAO = '1.8.0';
 const $app = document.getElementById('app');
 const S = { store: null, cfg: null, funcs: [], frota: [], meses: {}, tipoSel: 'paga', salvando: 0 };
 
@@ -737,9 +739,15 @@ async function telaAjustes() {
     <button class="btn link" data-act="addFixa">+ Nova despesa fixa</button>
   </section>
 
+  <section class="card"><h3>Backup em Excel</h3>
+    <p class="mini">Planilha completa: resumo mensal, caixa diário, lavagens, mensalistas, despesas, folha, funcionários e Sulgás.</p>
+    <div class="linha"><button class="btn" data-act="excelBaixar">⬇️ Baixar Excel</button><button class="btn" data-act="excelEnviar">✉️ Enviar por e-mail</button></div>
+    <p class="mini">Envio automático: todo <b>dia 15</b> para <b>${EMAIL_BACKUP}</b> (pelo GitHub).</p>
+  </section>
+
   <section class="card"><h3>Dados</h3>
     <label class="btn arquivo">Importar histórico (.json)<input type="file" accept=".json,application/json" id="fImport" hidden></label>
-    <button class="btn" data-act="exportar">Baixar backup completo</button>
+    <button class="btn" data-act="exportar">Baixar backup (.json)</button>
     <p class="mini">Versão ${VERSAO}</p>
   </section>`;
   $app.innerHTML = moldura(corpo, 'Ajustes');
@@ -778,6 +786,30 @@ async function importar(file) {
     }
     await carregarBase(); toast('Histórico importado!'); status('Salvo ✓'); location.hash = '#/mes/' + mkDe(hojeISO()); rotear();
   } catch (e) { toast('Falha ao importar: ' + e.message, true); }
+}
+
+async function gerarExcel() {
+  status('Gerando Excel…');
+  const meses = {};
+  for (const m of await S.store.list('meses')) { const { id, ...r } = m; meses[id] = r; }
+  const bytes = montarPlanilha({ cfg: S.cfg, funcs: S.funcs, frota: S.frota, meses });
+  status('');
+  return new File([bytes], nomeArquivoBackup(hojeISO()), { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+}
+function baixarArquivo(file) {
+  const a = document.createElement('a'); a.href = URL.createObjectURL(file); a.download = file.name;
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+async function excelEnviar() {
+  const file = await gerarExcel();
+  const assunto = `Backup Estacionamento Anita ${dataBR(hojeISO())}`;
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file], title: assunto, text: `${assunto} (enviar para ${EMAIL_BACKUP})` }); return; }
+    catch (e) { if (e.name === 'AbortError') return; }
+  }
+  baixarArquivo(file);
+  toast('Excel baixado. Anexe no e-mail que vai abrir.');
+  setTimeout(() => { location.href = `mailto:${EMAIL_BACKUP}?subject=${encodeURIComponent(assunto)}&body=${encodeURIComponent('Backup em anexo (' + file.name + ').')}`; }, 800);
 }
 
 async function exportar() {
@@ -907,6 +939,8 @@ $app.addEventListener('click', async (ev) => {
     case 'addFixa': (S.cfg.despesasFixas = S.cfg.despesasFixas || []).push({ desc: 'Nova', valor: 0 }); await salvarCfg(); telaAjustes(); break;
     case 'delFixa': S.cfg.despesasFixas.splice(+el.dataset.i, 1); await salvarCfg(); telaAjustes(); break;
     case 'exportar': exportar(); break;
+    case 'excelBaixar': try { baixarArquivo(await gerarExcel()); } catch (e) { toast('Erro ao gerar Excel: ' + e.message, true); } break;
+    case 'excelEnviar': try { await excelEnviar(); } catch (e) { toast('Erro ao enviar: ' + e.message, true); } break;
     case 'conectar': {
       try { const cfg = interpretarConfig(document.getElementById('fbcfg').value); salvarConfigFirebase(cfg); toast('Configuração salva. Entrando…'); setTimeout(() => location.reload(), 600); }
       catch (e) { toast(e.message, true); }

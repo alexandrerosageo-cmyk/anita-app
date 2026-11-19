@@ -3,20 +3,14 @@
 //  - "local": salvo só neste aparelho (para testar antes de configurar o Firebase)
 // Coleções: config/app, funcionarios/{id}, frota/lista, meses/{AAAA-MM}
 
+import { FIREBASE_PADRAO } from './firebase-config.js';
+
 const FB = 'https://www.gstatic.com/firebasejs/10.12.2/';
 const LS_CFG = 'anita.firebaseConfig';
 const LS_PREFIX = 'anita.db.';
 const LS_LOCAL = 'anita.modoLocal';
 
-// Projeto Firebase do estacionamento (não é segredo: o acesso é protegido pelo login e pelas regras do Firestore)
-const FIREBASE_PADRAO = {
-  apiKey: 'AIzaSyDNCPXVqvtZXCY3oTJTR8_WNxcZENf47rQ',
-  authDomain: 'anita-estacionamento.firebaseapp.com',
-  projectId: 'anita-estacionamento',
-  storageBucket: 'anita-estacionamento.firebasestorage.app',
-  messagingSenderId: '125383624097',
-  appId: '1:125383624097:web:e9154252a3843959f8b7e0',
-};
+
 
 const limpa = (o) => JSON.parse(JSON.stringify(o)); // Firestore não aceita undefined
 

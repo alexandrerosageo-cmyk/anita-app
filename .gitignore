@@ -3,3 +3,4 @@ historico*.json
 backup-*.json
 *.xlsx
 .DS_Store
+node_modules/

@@ -1,0 +1,9 @@
+{
+  "name": "anita-app",
+  "private": true,
+  "type": "module",
+  "description": "App de gestão do Estacionamento Anita. O package.json serve só para o envio automático do backup (GitHub Actions).",
+  "dependencies": {
+    "nodemailer": "^6.9.16"
+  }
+}
