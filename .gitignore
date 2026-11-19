@@ -1,0 +1,5 @@
+# Dados do negócio NUNCA vão para o GitHub (o repositório do GitHub Pages é público)
+historico*.json
+backup-*.json
+*.xlsx
+.DS_Store

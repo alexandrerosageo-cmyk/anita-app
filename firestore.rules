@@ -1,0 +1,16 @@
+rules_version = '2';
+// Só os e-mails listados abaixo podem ler e gravar os dados do app.
+// Para incluir um sócio no futuro, acrescente o e-mail dele na lista.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function autorizado() {
+      return request.auth != null
+        && request.auth.token.email in [
+          'SEU_EMAIL_AQUI@gmail.com'
+        ];
+    }
+    match /{documento=**} {
+      allow read, write: if autorizado();
+    }
+  }
+}
