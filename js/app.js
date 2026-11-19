@@ -1,7 +1,7 @@
 import * as C from './calc.js';
-import { criarStore, salvarConfigFirebase, interpretarConfig, lerConfigFirebase } from './store.js';
+import { criarStore, salvarConfigFirebase, interpretarConfig, lerConfigFirebase, usarFirebasePadrao } from './store.js';
 
-const VERSAO = '1.0.0';
+const VERSAO = '1.1.0';
 const $app = document.getElementById('app');
 const S = { store: null, cfg: null, funcs: [], frota: [], meses: {}, tipoSel: 'paga', salvando: 0 };
 
@@ -460,8 +460,10 @@ async function telaAjustes() {
       ? `<p>Conectado ao Firebase <b>${esc((lerConfigFirebase() || {}).projectId)}</b> como <b>${esc(u && u.email)}</b>.</p>
          <div class="linha"><button class="btn" data-act="sair">Sair</button><button class="btn link" data-act="desconectar">Desconectar este aparelho</button></div>`
       : `<p><b>Modo local:</b> os dados ficam só neste aparelho. Para guardar na nuvem e usar em mais de um aparelho, cole aqui a configuração do Firebase (veja o README).</p>
+         <button class="btn" data-act="voltarFirebase">Conectar ao Firebase do estacionamento</button>
+         <details><summary class="mini">Usar outro projeto Firebase</summary>
          <textarea id="fbcfg" rows="5" placeholder="const firebaseConfig = { apiKey: ..., projectId: ... }"></textarea>
-         <button class="btn" data-act="conectar">Conectar ao Firebase</button>`}
+         <button class="btn" data-act="conectar">Conectar</button></details>`}
   </section>
 
   <form class="card" id="fRegras">
@@ -584,6 +586,7 @@ $app.addEventListener('click', async (ev) => {
       catch (e) { toast(e.message, true); }
       break;
     }
+    case 'voltarFirebase': usarFirebasePadrao(); location.reload(); break;
     case 'sair': await S.store.sair(); location.reload(); break;
     case 'desconectar': if (confirm('Voltar ao modo local neste aparelho? (os dados no Firebase continuam lá)')) { salvarConfigFirebase(null); location.reload(); } break;
   }

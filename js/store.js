@@ -6,6 +6,17 @@
 const FB = 'https://www.gstatic.com/firebasejs/10.12.2/';
 const LS_CFG = 'anita.firebaseConfig';
 const LS_PREFIX = 'anita.db.';
+const LS_LOCAL = 'anita.modoLocal';
+
+// Projeto Firebase do estacionamento (não é segredo: o acesso é protegido pelo login e pelas regras do Firestore)
+const FIREBASE_PADRAO = {
+  apiKey: 'AIzaSyDNCPXVqvtZXCY3oTJTR8_WNxcZENf47rQ',
+  authDomain: 'anita-estacionamento.firebaseapp.com',
+  projectId: 'anita-estacionamento',
+  storageBucket: 'anita-estacionamento.firebasestorage.app',
+  messagingSenderId: '125383624097',
+  appId: '1:125383624097:web:e9154252a3843959f8b7e0',
+};
 
 const limpa = (o) => JSON.parse(JSON.stringify(o)); // Firestore não aceita undefined
 
@@ -52,8 +63,15 @@ class FirebaseStore {
   async list(col) { const q = await this.fs.getDocs(this.fs.collection(this.db, col)); return q.docs.map((d) => ({ id: d.id, ...d.data() })); }
 }
 
-export function lerConfigFirebase() { try { return JSON.parse(localStorage.getItem(LS_CFG) || 'null'); } catch { return null; } }
-export function salvarConfigFirebase(cfg) { if (cfg) localStorage.setItem(LS_CFG, JSON.stringify(cfg)); else localStorage.removeItem(LS_CFG); }
+export function lerConfigFirebase() {
+  if (localStorage.getItem(LS_LOCAL) === '1') return null;
+  try { return JSON.parse(localStorage.getItem(LS_CFG) || 'null') || FIREBASE_PADRAO; } catch { return FIREBASE_PADRAO; }
+}
+export function salvarConfigFirebase(cfg) {
+  if (cfg) { localStorage.setItem(LS_CFG, JSON.stringify(cfg)); localStorage.removeItem(LS_LOCAL); }
+  else { localStorage.removeItem(LS_CFG); localStorage.setItem(LS_LOCAL, '1'); }
+}
+export function usarFirebasePadrao() { localStorage.removeItem(LS_CFG); localStorage.removeItem(LS_LOCAL); }
 
 // Aceita o trecho copiado do console do Firebase (objeto JS) ou JSON puro
 export function interpretarConfig(txt) {

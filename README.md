@@ -57,9 +57,7 @@ Dias antes da data de vigência usam a regra antiga, com o prêmio importado da 
 
 ## 3. Conectar o app
 
-1. Abra o endereço do GitHub Pages.
-2. Vá em **Ajustes**, cole o bloco `firebaseConfig` e toque em **Conectar ao Firebase**.
-3. Entre com o e-mail e a senha criados no passo 2.3.
+A configuração do projeto `anita-estacionamento` já está no código (`js/store.js`). Basta abrir o endereço do GitHub Pages e entrar com o e-mail e a senha criados no passo 2.3.
 
 ## 4. Importar o histórico (uma vez só)
 
