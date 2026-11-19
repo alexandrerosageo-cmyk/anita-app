@@ -2,7 +2,7 @@
 // Lê os dados do Firestore com o login do app, gera o Excel e envia pelo Gmail.
 // Segredos necessários (GitHub → Settings → Secrets and variables → Actions):
 //   APP_EMAIL, APP_SENHA        login do app (o mesmo do celular)
-//   GMAIL_SENHA_APP             senha de app do Gmail de anitaparkingpoa@gmail.com
+//   GMAIL_SENHA_APP             senha de app do Gmail de alexandrerosageo@gmail.com
 import nodemailer from 'nodemailer';
 import { montarPlanilha, nomeArquivoBackup } from '../js/planilha.js';
 import { FIREBASE_PADRAO, EMAIL_BACKUP } from '../js/firebase-config.js';

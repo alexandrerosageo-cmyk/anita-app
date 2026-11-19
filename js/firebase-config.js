@@ -7,4 +7,4 @@ export const FIREBASE_PADRAO = {
   messagingSenderId: '125383624097',
   appId: '1:125383624097:web:e9154252a3843959f8b7e0',
 };
-export const EMAIL_BACKUP = 'anitaparkingpoa@gmail.com';
+export const EMAIL_BACKUP = 'alexandrerosageo@gmail.com';
