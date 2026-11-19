@@ -1,7 +1,7 @@
 import * as C from './calc.js';
 import { criarStore, salvarConfigFirebase, interpretarConfig, lerConfigFirebase, usarFirebasePadrao } from './store.js';
 
-const VERSAO = '1.7.2';
+const VERSAO = '1.7.3';
 const $app = document.getElementById('app');
 const S = { store: null, cfg: null, funcs: [], frota: [], meses: {}, tipoSel: 'paga', salvando: 0 };
 
@@ -340,7 +340,9 @@ async function telaMes(mk) {
       <p class="mini">Pagas ${ap.tot.pagas} · Cortesias ${ap.tot.cort} · Sulgás ${ap.tot.sulgas}${ap.tot.retornos ? ` · Retornos ${ap.tot.retornos}` : ''} · Base de cálculo ${brl(ap.tot.base)}</p>
       <p>Prêmio até agora (quem trabalhou todos os dias): <b>${brl(maxPf)}</b></p>`
     : `<p>Prêmio pago pela regra antiga: <b>${brl(ap.tot.premioPessoaDia)}</b> por pessoa.</p>
-       <p class="mini">Pela regra nova seriam ${brl(ap.tot.simNova)} em prêmios diários${C.faixaMes(ap.tot.contados, S.cfg) ? ` + bônus de ${brl(C.faixaMes(ap.tot.contados, S.cfg).valor)}` : ''} (pagas ${ap.tot.pagas} · cortesias ${ap.tot.cort} · Sulgás ${ap.tot.sulgas}).</p>`}
+       ${(() => { const bn = (C.faixaMes(ap.tot.contados, S.cfg) || {}).valor || 0; const tn = C.r2(ap.tot.simNova + bn); const dif = C.r2(tn - ap.tot.premioPessoaDia);
+         return `<p>Pela regra nova seria: <b>${brl(tn)}</b> por pessoa <small>(${dif >= 0 ? '+' : '−'}${brl(Math.abs(dif))})</small></p>
+         <p class="mini">${brl(ap.tot.simNova)} em prêmios diários${bn ? ` + bônus de ${brl(bn)}` : ' · sem bônus mensal'} · pagas ${ap.tot.pagas} · cortesias ${ap.tot.cort} · Sulgás ${ap.tot.sulgas}. Considera quem trabalhou todos os dias.</p>`; })()}`}
     ${graficoMes(ap)}
   </section>
 
