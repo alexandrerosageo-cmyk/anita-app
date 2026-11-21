@@ -5,7 +5,7 @@ import * as V from './convenio.js';
 import { EMAIL_BACKUP } from './firebase-config.js';
 import { criarStore, salvarConfigFirebase, interpretarConfig, lerConfigFirebase, usarFirebasePadrao } from './store.js';
 
-const VERSAO = '2.0.2';
+const VERSAO = '2.1.0';
 const $app = document.getElementById('app');
 const S = { store: null, cfg: null, funcs: [], frota: [], meses: {}, tipoSel: 'paga', salvando: 0 };
 
@@ -210,14 +210,14 @@ async function telaDia(iso) {
     <h3>Lançar lavagem</h3>
     <div class="seg" role="tablist">${['paga', 'cortesia', 'sulgas', 'retorno'].map((t) => `<button data-act="tipo" data-t="${t}" class="${S.tipoSel === t ? 'on t-' + t : ''}">${C.TIPOS[t].nome}</button>`).join('')}</div>
     ${S.tipoSel === 'sulgas' ? `
-      <div class="linha"><input id="placaSul" list="frotaList" placeholder="Placa do veículo Sulgás" autocapitalize="characters" autocomplete="off">
+      <div class="linha"><input id="ticketSul" inputmode="numeric" placeholder="Nº do ticket" autocomplete="off" style="max-width:8.5rem"><input id="placaSul" list="frotaList" placeholder="Placa do veículo Sulgás" autocapitalize="characters" autocomplete="off">
       <button class="btn" data-act="addSulgas">+ Sulgás ${brl(S.cfg.sulgasValor)}</button></div>
       <p id="infoPlaca" class="mini">Digite a placa: o motorista cadastrado aparece aqui.</p>
       <div id="novoMot" class="linha" hidden><input id="motSul" placeholder="Motorista desta placa" autocomplete="off"><input id="modSul" placeholder="Modelo (opcional)" style="max-width:8rem"></div>
       <datalist id="frotaList">${S.frota.map((v) => `<option value="${esc(v.placa)}">${esc(v.nome || '')} ${esc(v.modelo || '')}</option>`).join('')}</datalist>`
     : `<div class="precos">${S.cfg.precos.map((pr, i) => `<button class="preco t-${S.tipoSel}" data-act="addLav" data-i="${i}"><b>${esc(pr.nome)}</b>${!mesmoRotulo(pr) ? `<small>${brl(pr.valor)}</small>` : ''}</button>`).join('')}</div>
       ${S.tipoSel === 'paga' ? `<div class="linha"><input id="outroValor" inputmode="decimal" placeholder="Outro valor (com desconto)"><button class="btn" data-act="addOutro">+ Adicionar</button></div>` : `<p class="mini">${S.tipoSel === 'cortesia' ? 'Cortesia conta como carro, mas entra com valor zero.' : 'Retorno (refeito por reclamação) não conta para meta nem para a base.'}</p>`}`}
-    ${lav.length ? `<ol class="lavs">${lav.map((l, i) => `<li class="t-${l.t}"><span>${C.TIPOS[l.t].nome}${l.placa ? ' · ' + esc(l.placa) : ''}${l.t === 'sulgas' && (l.mot || motoristaDe(l.placa)) ? ' · ' + esc(l.mot || motoristaDe(l.placa)) : ''}${l.desc ? ' · ' + esc(l.desc) : ''}</span><b>${l.t === 'paga' || l.t === 'sulgas' ? brl(l.v) : '—'}</b><button class="x" data-act="delLav" data-i="${i}" aria-label="remover">✕</button></li>`).join('')}</ol>` : '<p class="vazio">Nenhuma lavagem lançada neste dia.</p>'}
+    ${lav.length ? `<ol class="lavs">${lav.map((l, i) => `<li class="t-${l.t}"><span>${C.TIPOS[l.t].nome}${l.ticket ? ' · tk ' + esc(l.ticket) : ''}${l.placa ? ' · ' + esc(l.placa) : ''}${l.t === 'sulgas' && (l.mot || motoristaDe(l.placa)) ? ' · ' + esc(l.mot || motoristaDe(l.placa)) : ''}${l.desc ? ' · ' + esc(l.desc) : ''}</span><b>${l.t === 'paga' || l.t === 'sulgas' ? brl(l.v) : '—'}</b><button class="x" data-act="delLav" data-i="${i}" aria-label="remover">✕</button></li>`).join('')}</ol>` : '<p class="vazio">Nenhuma lavagem lançada neste dia.</p>'}
   </section>`}
 
   <section class="card">
@@ -832,7 +832,7 @@ async function telaSulgas(iso) {
     for (const s of M.sulgasLista || []) if (s.data >= per.ini && s.data <= per.fim) itens.push({ ...s, origem: 'planilha' });
     for (const [dd, dia] of Object.entries(M.dias)) {
       const di = `${mk}-${dd}`; if (di < per.ini || di > per.fim) continue;
-      (dia.lav || []).forEach((l) => { if (l.t === 'sulgas') itens.push({ data: di, placa: l.placa || '', nome: l.mot || '', valor: l.v }); });
+      (dia.lav || []).forEach((l) => { if (l.t === 'sulgas') itens.push({ data: di, placa: l.placa || '', nome: l.mot || '', valor: l.v, ticket: l.ticket || '' }); });
       if (!Array.isArray(dia.lav) && dia.sulgas && !(M.sulgasLista || []).some((s) => s.data === di)) for (let i = 0; i < dia.sulgas; i++) itens.push({ data: di, placa: '(sem placa)', valor: S.cfg.sulgasValor });
     }
   }
@@ -843,8 +843,8 @@ async function telaSulgas(iso) {
   <div class="navdata"><a class="btn ic" href="#/sulgas/${somaDias(per.ini, -1)}">‹</a><b class="titmes semcap">${dataBR(per.ini).slice(0, 5)} a ${dataBR(per.fim)}</b><a class="btn ic" href="#/sulgas/${somaDias(per.fim, 1)}">›</a></div>
   <div class="kpis"><div class="kpi"><small>Lavagens no período</small><b>${itens.length}</b></div><div class="kpi"><small>Valor a faturar</small><b>${brl(total)}</b></div></div>
   <section class="card"><h3>Lavagens Sulgás</h3>
-    ${itens.length ? `<table class="tab"><thead><tr><th>Data</th><th>Placa</th><th>Usuário</th><th>Valor</th></tr></thead><tbody>
-    ${itens.map((s) => `<tr data-href="#/hoje/${s.data}"><td>${dataBR(s.data).slice(0, 5)}</td><td>${esc(s.placa)}</td><td><small>${esc(s.nome || nomeDe(s.placa))}</small></td><td>${brl(s.valor)}</td></tr>`).join('')}</tbody></table>` : '<p class="vazio">Nenhuma lavagem Sulgás neste período.</p>'}
+    ${itens.length ? `<table class="tab"><thead><tr><th>Data</th><th>Ticket</th><th>Placa</th><th>Usuário</th><th>Valor</th></tr></thead><tbody>
+    ${itens.map((s) => `<tr data-href="#/hoje/${s.data}"><td>${dataBR(s.data).slice(0, 5)}</td><td><small>${esc(s.ticket || '—')}</small></td><td>${esc(s.placa)}</td><td><small>${esc(s.nome || nomeDe(s.placa))}</small></td><td>${brl(s.valor)}</td></tr>`).join('')}</tbody></table>` : '<p class="vazio">Nenhuma lavagem Sulgás neste período.</p>'}
     <button class="btn link" data-act="copiarSulgas">Copiar lista para enviar</button>
   </section>
   <section class="card"><h3>Frota Sulgás <small>${S.frota.length} veículos</small></h3>
@@ -1034,7 +1034,13 @@ $app.addEventListener('click', async (ev) => {
         if (v) { v.nome = mot; if (mod && !v.modelo) v.modelo = mod; } else S.frota.push({ placa: pl, nome: mot, ...(mod ? { modelo: mod } : {}) });
         salvarFrota().catch((e) => toast('Frota não salva: ' + e.message, true));
       }
-      addLav({ t: 'sulgas', v: Number(S.cfg.sulgasValor), placa: pl, mot: (veiculo(pl) || {}).nome });
+      const tk = (document.getElementById('ticketSul').value || '').trim();
+      if (tk) {
+        const dup = Object.entries(S.meses).flatMap(([mk, M]) => Object.entries(M.dias || {}).flatMap(([dd, d]) => (d.lav || []).filter((x) => x.t === 'sulgas' && x.ticket === tk).map(() => `${dd}/${mk.slice(5)}`)));
+        if (dup.length && !confirm(`O ticket ${tk} já foi lançado em ${dup.join(', ')}. Lançar mesmo assim?`)) break;
+      }
+      addLav({ t: 'sulgas', v: Number(S.cfg.sulgasValor), placa: pl, mot: (veiculo(pl) || {}).nome, ...(tk ? { ticket: tk } : {}) });
+      setTimeout(() => { const n = document.getElementById('ticketSul'); if (n) n.focus(); }, 50);
       break;
     }
     case 'detToggle': S.detAberto = S.detAberto === el.dataset.k ? null : el.dataset.k; telaDia(ctx.iso); if (S.detAberto) setTimeout(() => { const n = document.getElementById('detNome'); if (n) { n.scrollIntoView({ block: 'center' }); n.focus(); } }, 50); break;
@@ -1131,8 +1137,9 @@ $app.addEventListener('click', async (ev) => {
     case 'delCad': { const k = el.dataset.cad, i = +el.dataset.i; if (!confirm(`Excluir "${S.cfg[k][i].nome}" do cadastro? Despesas já lançadas não mudam.`)) break; S.cfg[k].splice(i, 1); await salvarCfg(); telaDespesas(S.ctxDesp); break; }
     case 'delVeic': if (confirm('Remover veículo?')) { S.frota.splice(+el.dataset.i, 1); await salvarFrota(); telaSulgas(S.ctxSul.iso); } break;
     case 'copiarSulgas': {
+      const nomeDeSul = (pl) => motoristaDe(pl);
       const { itens, per } = S.ctxSul;
-      const txt = `Lavagens Sulgás ${dataBR(per.ini)} a ${dataBR(per.fim)}\n` + itens.map((s, i) => `${i + 1}. ${dataBR(s.data)} ${s.placa}`).join('\n') + `\nTotal: ${itens.length} × ${brl(S.cfg.sulgasValor)} = ${brl(itens.reduce((a, b) => a + (Number(b.valor) || 0), 0))}`;
+      const txt = `Lavagens Sulgás ${dataBR(per.ini)} a ${dataBR(per.fim)}\n` + itens.map((s, i) => `${i + 1}. ${dataBR(s.data)}${s.ticket ? ' · ticket ' + s.ticket : ''} · ${s.placa}${s.nome || nomeDeSul(s.placa) ? ' · ' + (s.nome || nomeDeSul(s.placa)) : ''}`).join('\n') + `\nTotal: ${itens.length} × ${brl(S.cfg.sulgasValor)} = ${brl(itens.reduce((a, b) => a + (Number(b.valor) || 0), 0))}`;
       try { await navigator.clipboard.writeText(txt); toast('Lista copiada'); } catch { prompt('Copie:', txt); }
       break;
     }
@@ -1185,7 +1192,7 @@ $app.addEventListener('input', (ev) => {
 
 $app.addEventListener('change', async (ev) => {
   const el = ev.target;
-  if (['detNome', 'detValor', 'detObs', 'placaSul', 'motSul', 'modSul'].includes(el.id)) return;
+  if (['detNome', 'detValor', 'detObs', 'placaSul', 'motSul', 'modSul', 'ticketSul'].includes(el.id)) return;
   if (el.dataset.act === 'irData' && el.value) { location.hash = '#/hoje/' + el.value; return; }
   if (el.dataset.act === 'feriado') { const d = diaAtual(); if (el.checked) d.feriado = true; else delete d.feriado; salvarMes(S.ctxDia.mk); telaDia(S.ctxDia.iso); return; }
   if (el.id === 'convArq' && el.files[0]) { const f = el.files[0]; try { await processarConvenio(await V.lerArquivo(f.name, await f.arrayBuffer()), f.name); } catch (e) { toast(e.message, true); } return; }
@@ -1224,6 +1231,7 @@ $app.addEventListener('change', async (ev) => {
 // Enter no campo de placa/valor adiciona direto
 $app.addEventListener('keydown', (ev) => {
   if (ev.key !== 'Enter') return;
+  if (ev.target.id === 'ticketSul') { ev.preventDefault(); document.getElementById('placaSul').focus(); }
   if (['placaSul', 'motSul', 'modSul'].includes(ev.target.id)) { ev.preventDefault(); document.querySelector('[data-act=addSulgas]').click(); }
   if (ev.target.id === 'outroValor') { ev.preventDefault(); document.querySelector('[data-act=addOutro]').click(); }
   if (['detNome', 'detValor', 'detObs'].includes(ev.target.id)) { ev.preventDefault(); document.querySelector('[data-act=addDet]').click(); }
