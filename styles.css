@@ -214,3 +214,5 @@ body:has(.salvarbar) .toast { bottom: calc(135px + env(safe-area-inset-bottom));
 .planilha summary { font-weight: 400; font-size: .92rem; }
 .planilha summary small { display: inline; margin-left: .3rem; }
 .planilha .grade2 { margin-top: .6rem; }
+.composicao { display: flex; flex-wrap: wrap; gap: .3rem; margin-top: .35rem; }
+.composicao span { background: var(--agua); border-radius: 20px; padding: .1rem .5rem; font-size: .78rem; }

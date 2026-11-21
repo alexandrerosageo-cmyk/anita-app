@@ -5,7 +5,7 @@ import * as V from './convenio.js';
 import { EMAIL_BACKUP } from './firebase-config.js';
 import { criarStore, salvarConfigFirebase, interpretarConfig, lerConfigFirebase, usarFirebasePadrao } from './store.js';
 
-const VERSAO = '2.5.1';
+const VERSAO = '2.6.0';
 const $app = document.getElementById('app');
 const S = { store: null, cfg: null, funcs: [], frota: [], meses: {}, tipoSel: 'paga', salvando: 0 };
 
@@ -226,7 +226,8 @@ async function telaDia(iso) {
 
   ${legadoAgregado ? `
   <section class="card planilha">
-    <details ${S.abrirPlanilha ? 'open' : ''} data-planilha><summary><b>Da planilha:</b> ${dia.pagas || 0} pagas (${brl(dia.valor)}) · ${dia.cort || 0} cortesias · ${dia.sulgas || 0} Sulgás <small>tocar para corrigir</small></summary>
+    <details ${S.abrirPlanilha ? 'open' : ''} data-planilha><summary><b>Da planilha:</b> ${dia.pagas || 0} pagas (${brl(dia.valor)}) · ${dia.cort || 0} cortesias · ${dia.sulgas || 0} Sulgás <small>tocar para corrigir</small>
+      ${dia.precos ? `<div class="composicao">${Object.entries(dia.precos).sort((a, b) => b[0] - a[0]).map(([v, n]) => `<span>${n}× ${esc(((S.cfg.precos || []).find((p) => Math.abs(p.valor - v) < 0.005) || {}).nome || brl(Number(v)))}</span>`).join('')}</div>` : ''}</summary>
     <div class="grade2">
       <label>Pagas<input inputmode="numeric" data-campo="pagas" value="${dia.pagas || ''}"></label>
       <label>Valor das pagas<input inputmode="decimal" data-campo="valor" value="${fmtN(dia.valor)}"></label>
@@ -754,10 +755,10 @@ async function telaAnalise(tipo, ref) {
   <section class="card"><h3>Lavagens <small>${t.contados} contadas</small></h3>
     <p>Pagas <b>${t.pagas}</b> · Sulgás <b>${t.sulgas}</b> · Cortesias <b>${t.cort}</b>${t.retornos ? ` · Retornos <b>${t.retornos}</b>` : ''}</p>
     <p class="mini">Valor médio por lavagem paga: <b>${brl(t.ticket)}</b>.</p>
-    ${an.servicos.length ? (() => { const nApp = an.servicos.reduce((a, x) => a + x.n, 0); return `<h4>Quais serviços saem mais</h4>
-      <p class="mini">Só conta as <b>${nApp}</b> lavagens pagas lançadas carro a carro no app${t.pagas > nApp ? ` (de ${t.pagas} no período; a planilha antiga guardava só o total do dia, sem o preço de cada uma)` : ''}.</p>
-      <table class="tab"><thead><tr><th>Serviço / preço</th><th>Qtd</th><th>% </th><th>Total</th></tr></thead><tbody>${an.servicos.slice(0, 10).map((x) => `<tr><td>${esc(x.nome || brl(x.valor))}</td><td>${x.n}</td><td>${Math.round((x.n / nApp) * 100)}%</td><td>${brl(x.total)}</td></tr>`).join('')}</tbody></table>
-      ${an.servicos.every((x) => !x.nome) ? '<p class="mini">Dica: dê nomes aos botões de preço em ⚙️ Ajustes (ex.: "Completa SUV") e esta tabela passa a mostrar o serviço.</p>' : ''}`; })() : '<p class="mini">Quais serviços saem mais aparece conforme as lavagens forem lançadas carro a carro no app.</p>'}
+    ${an.servicos.length ? (() => { const nTot = an.servicos.reduce((a, x) => a + x.n, 0); const semPreco = t.pagas - nTot; return `<h4>Quais serviços saem mais</h4>
+      <table class="tab"><thead><tr><th>Serviço / preço</th><th>Qtd</th><th>%</th><th>Total</th></tr></thead><tbody>${an.servicos.slice(0, 12).map((x) => `<tr><td>${x.nome && x.nome.replace(/\s/g, '') !== brl(x.valor).replace(/\s/g, '') ? `${esc(x.nome)}<small>${brl(x.valor)}</small>` : brl(x.valor)}</td><td>${x.n}</td><td>${Math.round((x.n / nTot) * 100)}%</td><td>${brl(x.total)}</td></tr>`).join('')}</tbody></table>
+      <p class="mini">Preço de cada lavagem: tirado das fórmulas da planilha (ex.: 2×69,90 + 54,90) e dos lançamentos no app.${semPreco > 0 ? ` ${semPreco} lavagens do período ficaram de fora porque o dia foi digitado só com o total, sem fórmula.` : ''}</p>
+      ${an.servicos.every((x) => !x.nome || x.nome.replace(/\s/g, '') === brl(x.valor).replace(/\s/g, '')) ? '<p class="mini">Dica: dê nomes aos botões de preço em ⚙️ Ajustes (ex.: "Completa SUV") e esta tabela passa a mostrar o serviço.</p>' : ''}`; })() : '<p class="mini">Ainda não há preços de lavagens neste período.</p>'}
   </section>
 
   <section class="card"><h3>Formas de recebimento</h3>
@@ -1030,13 +1031,24 @@ async function importar(file) {
     const temCfg = await S.store.get('config', 'app');
     if (h.config && (!temCfg || h.tipo === 'estacionamento-anita-backup')) await S.store.set('config', 'app', h.config);
     for (const f of h.funcionarios || []) if (h.tipo === 'estacionamento-anita-backup' || !S.funcs.find((x) => x.id === f.id)) await S.store.set('funcionarios', f.id, f);
-    if ((h.frota || []).length) await S.store.set('frota', 'lista', { veiculos: h.frota });
+    if ((h.frota || []).length) {
+      const atualFrota = ((await S.store.get('frota', 'lista')) || {}).veiculos || [];
+      const np = (p) => String(p || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+      const mescla = h.tipo === 'estacionamento-anita-backup' ? h.frota : [...atualFrota, ...h.frota.filter((v) => !atualFrota.some((a) => np(a.placa) === np(v.placa)))];
+      await S.store.set('frota', 'lista', { veiculos: mescla });
+    }
     let i = 0; const ks = Object.keys(h.meses || {});
     for (const mk of ks) {
       const atual = (await S.store.get('meses', mk)) || { dias: {} };
       const novo = h.meses[mk];
       const dias = { ...(novo.dias || {}) };
-      for (const [dd, d] of Object.entries(atual.dias || {})) if (!d.legado || h.tipo === 'estacionamento-anita-backup') dias[dd] = d; // preserva o que foi lançado no app
+      for (const [dd, d] of Object.entries(atual.dias || {})) {
+        if (!d.legado || h.tipo === 'estacionamento-anita-backup') { // preserva o que foi lançado no app
+          const nv = (novo.dias || {})[dd];
+          if (nv && nv.precos && !d.precos && Number(d.valor || 0) === Number(nv.valor || 0)) d.precos = nv.precos;
+          dias[dd] = d;
+        }
+      }
       await S.store.set('meses', mk, { ...novo, ...atual, ...(h.tipo === 'estacionamento-anita-backup' ? novo : {}), dias, folhaLegado: novo.folhaLegado || atual.folhaLegado, despesasLegado: novo.despesasLegado || atual.despesasLegado, sulgasLista: novo.sulgasLista || atual.sulgasLista });
       status(`Importando ${++i}/${ks.length}`);
     }

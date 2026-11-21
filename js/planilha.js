@@ -19,7 +19,7 @@ export function montarPlanilha({ cfg, funcs, frota, meses }) {
   const campos = [...cfg.pagamentos];
   for (const mk of mks) for (const d of Object.values(meses[mk].dias || {})) for (const k of Object.keys(d.pg || {})) if (!campos.some((c) => c.k === k)) campos.push({ k, nome: k });
 
-  const conv = [], resumo = [], caixa = [], lavagens = [], porNome = [], despesas = [], itens = [], folha = [], sulgas = [];
+  const porPreco = [], conv = [], resumo = [], caixa = [], lavagens = [], porNome = [], despesas = [], itens = [], folha = [], sulgas = [];
   for (const mk of mks) {
     const M = meses[mk];
     const ap = C.apuraMes(mk, M, cfg, funcs);
@@ -37,6 +37,8 @@ export function montarPlanilha({ cfg, funcs, frota, meses }) {
       const faltas = Object.entries(pres).filter(([, s]) => s === 'F' || s === 'J').map(([id, s]) => `${nomeFunc(id)} (${s})`).join(', ');
       caixa.push([l.iso, SEM[C.diaSemana(l.iso)], ...campos.map((c) => (d.pg || {})[c.k] || null), l.receita, l.pagas, l.cort, l.sulgas, l.retornos, l.valorPagas, l.base, l.regra === 'nova' ? l.faixa.pct : null, l.porPessoa || null, presentes, faltas, d.obs || '']);
       if (d.convSab) { const r = d.convSab.res; conv.push([l.iso, C.ehSabado(l.iso) ? 'sábado' : 'feriado', r.carros, r.pico, r.momentoPico || '', r.extras, r.cfg.vagas, r.valorDia, r.valorExtras, r.total]); }
+      for (const [v, n] of Object.entries(d.precos || {})) porPreco.push([l.iso, Number(v), n, C.r2(Number(v) * n), 'planilha']);
+      { const g = {}; for (const x of d.lav || []) if (x.t === 'paga') { const k = C.r2(x.v).toFixed(2); g[k] = (g[k] || 0) + 1; } for (const [v, n] of Object.entries(g)) porPreco.push([l.iso, Number(v), n, C.r2(Number(v) * n), 'app']); }
       (d.lav || []).forEach((x, i) => lavagens.push([l.iso, i + 1, C.TIPOS[x.t] ? C.TIPOS[x.t].nome : x.t, x.v || 0, x.ticket || '', x.placa || '', x.cliente || x.mot || (x.placa ? motorista(x.placa) : ''), x.desc || '']));
       for (const [k, lst] of Object.entries(d.det || {})) for (const p of lst) porNome.push([l.iso, (campos.find((c) => c.k === k) || {}).nome || k, p.nome, p.valor, p.obs || '']);
       if (d.sulgas && !(M.sulgasLista || []).some((s) => s.data === l.iso)) for (let i = 0; i < d.sulgas; i++) sulgas.push([l.iso, '', '', '', cfg.sulgasValor || 0, 'planilha (sem placa)']);
@@ -67,6 +69,7 @@ export function montarPlanilha({ cfg, funcs, frota, meses }) {
     { nome: 'Resumo mensal', colunas: [T('Mês', 'texto', 9), T('Receita', 'moeda'), T('Dinheiro', 'moeda'), T('Ao contador', 'moeda'), T('Estacionamento', 'moeda'), T('Lavagens pagas', 'moeda'), T('Veículos contados', 'num', 10), T('Pagas', 'num', 8), T('Cortesias', 'num', 9), T('Sulgás', 'num', 8), T('Despesas', 'moeda'), T('Resultado', 'moeda'), T('Prêmio por pessoa', 'moeda'), T('Regra', 'texto', 8)], linhas: resumo },
     { nome: 'Caixa diário', colunas: [T('Data', 'data', 11), T('Dia', 'texto', 5), ...campos.map((c) => T(c.nome, 'moeda', 12)), T('Total', 'moeda'), T('Pagas', 'num', 7), T('Cortesias', 'num', 8), T('Sulgás', 'num', 7), T('Retornos', 'num', 8), T('Valor lavagens pagas', 'moeda'), T('Base do prêmio', 'moeda'), T('Faixa %', 'num', 7), T('Prêmio/pessoa', 'moeda'), T('Trabalharam', 'texto', 28), T('Faltas/justificadas', 'texto', 20), T('Observações', 'texto', 40)], linhas: caixa },
     { nome: 'Lavagens', colunas: [T('Data', 'data', 11), T('Nº', 'num', 5), T('Tipo', 'texto', 10), T('Valor', 'moeda'), T('Ticket', 'texto', 10), T('Placa', 'texto', 10), T('Motorista / quem recebeu', 'texto', 24), T('Serviço', 'texto', 20)], linhas: lavagens },
+    { nome: 'Lavagens por preço', colunas: [T('Data', 'data', 11), T('Preço', 'moeda'), T('Quantidade', 'num', 10), T('Total', 'moeda'), T('Origem', 'texto', 9)], linhas: porPreco },
     { nome: 'Pagamentos por nome', colunas: [T('Data', 'data', 11), T('Campo', 'texto', 16), T('Nome', 'texto', 28), T('Valor', 'moeda'), T('Obs.', 'texto', 30)], linhas: porNome },
     { nome: 'Despesas', colunas: [T('Mês', 'texto', 9), T('Data', 'data', 11), T('Tipo', 'texto', 22), T('Fornecedor', 'texto', 22), T('Descrição', 'texto', 26), T('Itens', 'texto', 36), T('Valor', 'moeda'), T('Obs.', 'texto', 40)], linhas: despesas },
     { nome: 'Itens de despesas', colunas: [T('Data', 'data', 11), T('Fornecedor', 'texto', 22), T('Tipo', 'texto', 20), T('Material', 'texto', 26), T('Qtd', 'num', 7), T('Un', 'texto', 6), T('Valor', 'moeda')], linhas: itens },

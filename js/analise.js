@@ -58,9 +58,15 @@ export function analisar(ini, fim, meses, cfg, funcs) {
       const d = { iso: l.iso, dow: C.diaSemana(l.iso), contados: l.contados, pagas: l.pagas, cort: l.cort, sulgas: l.sulgas, retornos: l.retornos, valorPagas: l.valorPagas, receita: l.receita, avulso, estAvulso: C.r2(avulso - l.valorPagas), premio: l.porPessoa || 0 };
       dias.push(d);
       for (const [k, v] of Object.entries(pg)) campos[k] = C.r2((campos[k] || 0) + (Number(v) || 0));
-      for (const x of l.dia.lav || []) {
-        if (x.t === 'paga') { const k = x.desc || C.r2(x.v).toFixed(2); servicos[k] = servicos[k] || { nome: x.desc || null, valor: Number(x.v) || 0, n: 0, total: 0 }; servicos[k].n++; servicos[k].total = C.r2(servicos[k].total + (Number(x.v) || 0)); }
-      }
+      const nomePreco = (v) => ((cfg.precos || []).find((p) => Math.abs(Number(p.valor) - v) < 0.005) || {}).nome;
+      const somaServ = (v, nome, n, origem) => {
+        const k = C.r2(v).toFixed(2);
+        const sv = servicos[k] = servicos[k] || { nome: null, valor: v, n: 0, total: 0, app: 0, planilha: 0 };
+        if (nome && !sv.nome) sv.nome = nome;
+        sv.n += n; sv[origem] += n; sv.total = C.r2(sv.total + v * n);
+      };
+      for (const [v, n] of Object.entries(l.dia.precos || {})) somaServ(Number(v), nomePreco(Number(v)), n, 'planilha');
+      for (const x of l.dia.lav || []) if (x.t === 'paga') somaServ(Number(x.v) || 0, x.desc || nomePreco(Number(x.v)), 1, 'app');
       for (const k of ['contados', 'receita', 'avulso', 'valorPagas']) pm[k] = C.r2(pm[k] + d[k]);
       pm.estacionamento = C.r2(pm.receita - pm.valorPagas);
     }
