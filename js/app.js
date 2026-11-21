@@ -5,7 +5,7 @@ import * as V from './convenio.js';
 import { EMAIL_BACKUP } from './firebase-config.js';
 import { criarStore, salvarConfigFirebase, interpretarConfig, lerConfigFirebase, usarFirebasePadrao } from './store.js';
 
-const VERSAO = '2.7.0';
+const VERSAO = '2.8.0';
 const $app = document.getElementById('app');
 const S = { store: null, cfg: null, funcs: [], frota: [], meses: {}, tipoSel: 'paga', salvando: 0 };
 
@@ -46,6 +46,22 @@ function gruposPreco() {
   const out = nomes.map((k) => ({ nome: g[k][0][0].nome.split(/\s+/)[0], itens: g[k] })).sort((a, b) => a.itens[0][0].valor - b.itens[0][0].valor);
   if (outros.length) out.push({ nome: out.length ? 'Outros' : '', itens: outros });
   return out;
+}
+// tabela como a ficha do balcão: colunas = tipo de lavagem, linhas = tamanho do veículo
+function tabelaPrecos() {
+  const TAM = [['normal', 'Normais'], ['suv', "SUV's"], ['pick', 'Pick-Ups']];
+  const tamDe = (pr) => { const n = normTxt(pr.nome); return /pick/.test(n) ? 'pick' : /suv/.test(n) ? 'suv' : /normal/.test(n) ? 'normal' : null; };
+  const grupos = gruposPreco().filter((g) => g.nome && g.nome !== 'Outros');
+  const usados = new Set();
+  const cel = {};
+  for (const g of grupos) for (const [pr, i] of g.itens) { const t = tamDe(pr); if (t && !cel[g.nome + t]) { cel[g.nome + t] = [pr, i]; usados.add(i); } }
+  const botao = ([pr, i], rot) => `<button class="preco t-${S.tipoSel} ${grupoPreco(pr)}" data-act="addLav" data-i="${i}"><b>${esc(rot)}</b><small>${brl(pr.valor)}</small></button>`;
+  const resto = S.cfg.precos.map((pr, i) => [pr, i]).filter(([, i]) => !usados.has(i)).sort((a, b) => a[0].valor - b[0].valor);
+  if (!grupos.length) return `<div class="precos">${resto.map((it) => botao(it, it[0].nome)).join('')}</div>`;
+  return `<div class="matriz" style="grid-template-columns: auto repeat(${grupos.length}, 1fr)">
+    <span></span>${grupos.map((g) => `<span class="mcol">${esc(g.nome)}</span>`).join('')}
+    ${TAM.map(([t, rot]) => `<span class="mlin">${rot}</span>${grupos.map((g) => cel[g.nome + t] ? botao(cel[g.nome + t], cel[g.nome + t][0].valor.toFixed(2).replace('.', ',')) : '<span></span>').join('')}`).join('')}
+  </div>${resto.length ? `<div class="precos outros">${resto.map((it) => botao(it, it[0].nome)).join('')}</div>` : ''}`;
 }
 const nomeSemServico = (nome, serv) => { const r = String(nome).replace(new RegExp('^' + serv + '\\s*', 'i'), '').trim(); return r || nome; };
 // grupo do veículo pelo nome do botão: Normal (azul claro), SUV (médio), Pick-Up (escuro)
@@ -268,7 +284,7 @@ async function telaDia(iso) {
     : `${S.tipoSel === 'cortesia' ? `<div class="linha cort"><input id="cortNome" list="cortList" placeholder="Quem recebeu a cortesia?" autocomplete="off" value="${esc(S.cortNome || '')}"></div>
       <datalist id="cortList">${((S.cfg.nomes || {}).cortesia || []).map((m) => `<option value="${esc(m.nome)}">`).join('')}</datalist>
       <p class="mini">Escreva o nome e toque no serviço feito.</p>` : ''}
-      ${gruposPreco().map((g) => `<div class="grupo-precos">${g.nome ? `<span class="gtit">${esc(g.nome)}</span>` : ''}<div class="precos ${g.nome ? 'g3' : ''}">${g.itens.map(([pr, i]) => `<button class="preco t-${S.tipoSel} ${grupoPreco(pr)}" data-act="addLav" data-i="${i}"><b>${esc(g.nome ? nomeSemServico(pr.nome, g.nome) : pr.nome)}</b>${!mesmoRotulo(pr) ? `<small>${brl(pr.valor)}</small>` : ''}</button>`).join('')}</div></div>`).join('')}
+      ${tabelaPrecos()}
       ${S.tipoSel === 'paga' ? `<div class="linha"><input id="outroValor" inputmode="decimal" placeholder="Outro valor (com desconto)"><button class="btn" data-act="addOutro">+ Adicionar</button></div>` : `<p class="mini">${S.tipoSel === 'cortesia' ? 'Cortesia conta como carro, mas entra com valor zero.' : 'Retorno (refeito por reclamação) não conta para meta nem para a base.'}</p>`}`}
     ${lav.length ? `<ol class="lavs">${lav.map((l, i) => `<li class="t-${l.t}"><span>${C.TIPOS[l.t].nome}${l.ticket ? ' · tk ' + esc(l.ticket) : ''}${l.placa ? ' · ' + esc(l.placa) : ''}${l.t === 'sulgas' && (l.mot || motoristaDe(l.placa)) ? ' · <b class="mot">' + esc(l.mot || motoristaDe(l.placa)) + '</b>' : ''}${l.cliente ? ' · <b class="mot">' + esc(l.cliente) + '</b>' : ''}${l.desc ? ' · ' + esc(l.desc) : ''}</span><b>${l.t === 'paga' || l.t === 'sulgas' ? brl(l.v) : '—'}</b>${l.t === 'sulgas' ? `<button class="x" data-act="editSul" data-i="${i}" aria-label="editar">✎</button>` : l.t === 'cortesia' ? `<button class="x" data-act="editCort" data-i="${i}" aria-label="editar">✎</button>` : ''}<button class="x" data-act="delLav" data-i="${i}" aria-label="remover">✕</button></li>`).join('')}</ol>` : (legadoAgregado ? '' : '<p class="vazio">Nenhuma lavagem lançada neste dia.</p>')}
   </section>

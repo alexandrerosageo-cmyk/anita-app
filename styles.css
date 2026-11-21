@@ -228,3 +228,11 @@ body:has(.salvarbar) .toast { bottom: calc(135px + env(safe-area-inset-bottom));
 .grupo-precos .gtit { writing-mode: vertical-rl; transform: rotate(180deg); text-align: center; font-size: .68rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--suave); background: #edf0f4; border-radius: 8px; padding: .3rem .15rem; }
 .grupo-precos .precos { flex: 1; }
 .precos.g3 { grid-template-columns: repeat(3, 1fr) !important; }
+
+.matriz { display: grid; gap: .4rem; align-items: stretch; }
+.matriz .mcol { text-align: center; font-size: .75rem; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: var(--azul-esc); padding-bottom: .1rem; }
+.matriz .mlin { display: flex; align-items: center; font-size: .82rem; font-weight: 600; color: var(--texto); padding-right: .2rem; }
+.matriz .preco { padding: .85rem .2rem; }
+.matriz .preco b { font-size: 1.05rem; }
+.matriz .preco small { display: none; }
+.precos.outros { margin-top: .45rem; }
