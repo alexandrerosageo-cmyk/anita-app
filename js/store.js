@@ -51,10 +51,14 @@ class FirebaseStore {
   async entrar(email, senha) { const c = await this.au.signInWithEmailAndPassword(this.auth, email, senha); this.user = c.user; }
   usuario() { return this.user; }
   async sair() { await this.au.signOut(this.auth); this.user = null; }
-  async get(col, id) { const s = await this.fs.getDoc(this.fs.doc(this.db, col, id)); return s.exists() ? s.data() : null; }
-  async set(col, id, data) { await this.fs.setDoc(this.fs.doc(this.db, col, id), limpa(data)); }
-  async del(col, id) { await this.fs.deleteDoc(this.fs.doc(this.db, col, id)); }
-  async list(col) { const q = await this.fs.getDocs(this.fs.collection(this.db, col)); return q.docs.map((d) => ({ id: d.id, ...d.data() })); }
+  async _(op, caminho, fn) {
+    try { return await fn(); }
+    catch (e) { e.caminho = caminho; e.op = op; throw e; }
+  }
+  async get(col, id) { return this._('ler', `${col}/${id}`, async () => { const s = await this.fs.getDoc(this.fs.doc(this.db, col, id)); return s.exists() ? s.data() : null; }); }
+  async set(col, id, data) { return this._('gravar', `${col}/${id}`, () => this.fs.setDoc(this.fs.doc(this.db, col, id), limpa(data))); }
+  async del(col, id) { return this._('apagar', `${col}/${id}`, () => this.fs.deleteDoc(this.fs.doc(this.db, col, id))); }
+  async list(col) { return this._('ler', col, async () => { const q = await this.fs.getDocs(this.fs.collection(this.db, col)); return q.docs.map((d) => ({ id: d.id, ...d.data() })); }); }
 }
 
 export function lerConfigFirebase() {

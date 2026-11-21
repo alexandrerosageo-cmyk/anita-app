@@ -5,11 +5,19 @@ import * as V from './convenio.js';
 import { EMAIL_BACKUP } from './firebase-config.js';
 import { criarStore, salvarConfigFirebase, interpretarConfig, lerConfigFirebase, usarFirebasePadrao } from './store.js';
 
-const VERSAO = '2.0.0';
+const VERSAO = '2.0.1';
 const $app = document.getElementById('app');
 const S = { store: null, cfg: null, funcs: [], frota: [], meses: {}, tipoSel: 'paga', salvando: 0 };
 
 // ---------- utilidades ----------
+const ehPermissao = (e) => e && (e.code === 'permission-denied' || /insufficient permissions/i.test(e.message || ''));
+function telaErroPermissao(e) {
+  const u = S.store && S.store.usuario && S.store.usuario();
+  return `<div class="card erro-perm"><h3>O Firebase recusou o acesso</h3>
+    <p>Conta conectada: <b>${esc((u && u.email) || 'nenhuma')}</b>${e && e.caminho ? `<br><small>Ao ${esc(e.op || 'ler')}: ${esc(e.caminho)}</small>` : ''}</p>
+    <p class="mini">Isso acontece quando esse e-mail não está na lista das <b>Regras do Firestore</b> (Firebase → Firestore Database → Regras), ou quando as regras foram alteradas.</p>
+    <div class="linha"><button class="btn" data-act="sair">Sair e entrar com outra conta</button><button class="btn link" onclick="location.reload()">Tentar de novo</button></div></div>`;
+}
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const brl = (n) => (Number(n) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const num = (s) => { if (typeof s === 'number') return s; const t = String(s || '').trim().replace(/\s/g, ''); if (!t) return 0; const v = t.includes(',') ? t.replace(/\./g, '').replace(',', '.') : t; return Number(v) || 0; };
@@ -52,7 +60,7 @@ function salvarMes(mk) {
   clearTimeout(timers[mk]);
   timers[mk] = setTimeout(async () => {
     try { await S.store.set('meses', mk, S.meses[mk]); status('Salvo ✓'); }
-    catch (e) { status('Erro ao salvar'); toast('Não consegui salvar: ' + e.message, true); }
+    catch (e) { status('Erro ao salvar'); toast(ehPermissao(e) ? `Sem permissão para gravar (${(S.store.usuario() || {}).email || 'sem login'}). Veja as regras do Firestore.` : 'Não consegui salvar: ' + e.message, true); }
   }, 600);
 }
 async function salvarCfg() { await S.store.set('config', 'app', S.cfg); }
@@ -100,7 +108,8 @@ async function iniciar() {
       <button class="btn" data-act="desconectar">Voltar ao modo local</button></div>`;
     return;
   }
-  await carregarBase();
+  try { await carregarBase(); }
+  catch (e) { S.rota = 'ajustes'; $app.innerHTML = moldura(ehPermissao(e) ? telaErroPermissao(e) : `<div class="card erro">Erro ao carregar: ${esc(e.message)}</div>`); return; }
   window.addEventListener('hashchange', rotear);
   rotear();
 }
@@ -137,7 +146,7 @@ async function rotear() {
     else if (rota === 'analise') await telaAnalise(a || 'mes', b || `${mkDe(hojeISO())}-01`);
     else if (rota === 'ajustes') await telaAjustes();
     else location.hash = '#/hoje';
-  } catch (e) { console.error(e); $app.innerHTML = moldura(`<div class="card erro">Erro: ${esc(e.message)}</div>`); }
+  } catch (e) { console.error(e); $app.innerHTML = moldura(ehPermissao(e) ? telaErroPermissao(e) : `<div class="card erro">Erro: ${esc(e.message)}${e.caminho ? ` <small>(${esc(e.caminho)})</small>` : ''}</div>`); }
   window.scrollTo(0, 0);
 }
 
