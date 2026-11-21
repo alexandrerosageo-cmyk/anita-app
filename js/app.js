@@ -5,7 +5,7 @@ import * as V from './convenio.js';
 import { EMAIL_BACKUP } from './firebase-config.js';
 import { criarStore, salvarConfigFirebase, interpretarConfig, lerConfigFirebase, usarFirebasePadrao } from './store.js';
 
-const VERSAO = '2.2.1';
+const VERSAO = '2.3.0';
 const $app = document.getElementById('app');
 const S = { store: null, cfg: null, funcs: [], frota: [], meses: {}, tipoSel: 'paga', salvando: 0 };
 
@@ -240,11 +240,15 @@ async function telaDia(iso) {
       <div class="linha"><input id="ticketSul" inputmode="numeric" placeholder="Nº do ticket" autocomplete="off" style="max-width:8.5rem"><input id="placaSul" list="frotaList" placeholder="Placa do veículo Sulgás" autocapitalize="characters" autocomplete="off">
       <button class="btn" data-act="addSulgas">+ Sulgás ${brl(S.cfg.sulgasValor)}</button></div>
       <p id="infoPlaca" class="mini">Digite a placa: o motorista cadastrado aparece aqui.</p>
-      <div id="novoMot" class="linha" hidden><input id="motSul" placeholder="Motorista desta placa" autocomplete="off"><input id="modSul" placeholder="Modelo (opcional)" style="max-width:8rem"></div>
+      <div id="novoMot" hidden>
+        <div class="linha"><input id="motSul" list="motList" placeholder="Motorista desta lavagem" autocomplete="off"><input id="modSul" placeholder="Modelo (opcional)" style="max-width:8rem"></div>
+        <label class="chk mini" id="motPadraoBox" hidden><input type="checkbox" id="motPadrao"> salvar como motorista padrão desta placa</label>
+      </div>
+      <datalist id="motList">${[...new Set(S.frota.map((v) => v.nome).filter(Boolean))].sort().map((n) => `<option value="${esc(n)}">`).join('')}</datalist>
       <datalist id="frotaList">${S.frota.map((v) => `<option value="${esc(v.placa)}">${esc(v.nome || '')} ${esc(v.modelo || '')}</option>`).join('')}</datalist>`
     : `<div class="precos">${S.cfg.precos.map((pr, i) => `<button class="preco t-${S.tipoSel}" data-act="addLav" data-i="${i}"><b>${esc(pr.nome)}</b>${!mesmoRotulo(pr) ? `<small>${brl(pr.valor)}</small>` : ''}</button>`).join('')}</div>
       ${S.tipoSel === 'paga' ? `<div class="linha"><input id="outroValor" inputmode="decimal" placeholder="Outro valor (com desconto)"><button class="btn" data-act="addOutro">+ Adicionar</button></div>` : `<p class="mini">${S.tipoSel === 'cortesia' ? 'Cortesia conta como carro, mas entra com valor zero.' : 'Retorno (refeito por reclamação) não conta para meta nem para a base.'}</p>`}`}
-    ${lav.length ? `<ol class="lavs">${lav.map((l, i) => `<li class="t-${l.t}"><span>${C.TIPOS[l.t].nome}${l.ticket ? ' · tk ' + esc(l.ticket) : ''}${l.placa ? ' · ' + esc(l.placa) : ''}${l.t === 'sulgas' && (l.mot || motoristaDe(l.placa)) ? ' · ' + esc(l.mot || motoristaDe(l.placa)) : ''}${l.desc ? ' · ' + esc(l.desc) : ''}</span><b>${l.t === 'paga' || l.t === 'sulgas' ? brl(l.v) : '—'}</b><button class="x" data-act="delLav" data-i="${i}" aria-label="remover">✕</button></li>`).join('')}</ol>` : '<p class="vazio">Nenhuma lavagem lançada neste dia.</p>'}
+    ${lav.length ? `<ol class="lavs">${lav.map((l, i) => `<li class="t-${l.t}"><span>${C.TIPOS[l.t].nome}${l.ticket ? ' · tk ' + esc(l.ticket) : ''}${l.placa ? ' · ' + esc(l.placa) : ''}${l.t === 'sulgas' && (l.mot || motoristaDe(l.placa)) ? ' · <b class="mot">' + esc(l.mot || motoristaDe(l.placa)) + '</b>' : ''}${l.desc ? ' · ' + esc(l.desc) : ''}</span><b>${l.t === 'paga' || l.t === 'sulgas' ? brl(l.v) : '—'}</b>${l.t === 'sulgas' ? `<button class="x" data-act="editSul" data-i="${i}" aria-label="editar">✎</button>` : ''}<button class="x" data-act="delLav" data-i="${i}" aria-label="remover">✕</button></li>`).join('')}</ol>` : '<p class="vazio">Nenhuma lavagem lançada neste dia.</p>'}
   </section>`}
 
   <section class="card">
@@ -334,13 +338,24 @@ async function processarConvenio(linhas, arquivo) {
 const normPlaca = (p) => String(p || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 const veiculo = (pl) => S.frota.find((x) => normPlaca(x.placa) === normPlaca(pl));
 const motoristaDe = (pl) => (veiculo(pl) || {}).nome || '';
-function mostrarPlaca() {
+function mostrarPlaca(deTroca) {
   const inp = document.getElementById('placaSul'); if (!inp) return;
   const pl = normPlaca(inp.value), info = document.getElementById('infoPlaca'), box = document.getElementById('novoMot');
-  if (pl.length < 7) { info.textContent = 'Digite a placa: o motorista cadastrado aparece aqui.'; info.className = 'mini'; box.hidden = true; return; }
+  const mot = document.getElementById('motSul'), mod = document.getElementById('modSul'), padrao = document.getElementById('motPadraoBox');
+  if (pl.length < 7) { info.textContent = 'Digite a placa: o motorista cadastrado aparece aqui.'; info.className = 'mini'; box.hidden = true; mot.value = ''; mot.dataset.auto = ''; return; }
   const v = veiculo(pl);
-  if (v && v.nome) { info.innerHTML = `✅ <b>${esc(v.nome)}</b>${v.modelo ? ' · ' + esc(v.modelo) : ''}${v.cor ? ' · ' + esc(v.cor) : ''}`; info.className = 'mini ok'; box.hidden = true; }
-  else { info.textContent = v ? 'Placa cadastrada, mas sem motorista. Informe abaixo:' : 'Placa nova na frota. Informe o motorista:'; info.className = 'mini alerta'; box.hidden = false; }
+  box.hidden = false;
+  if (v && v.nome) {
+    if (!deTroca && (!mot.value || mot.dataset.auto === '1')) { mot.value = v.nome; mot.dataset.auto = '1'; }
+    mod.hidden = true;
+    const trocou = mot.value.trim() && mot.value.trim() !== v.nome;
+    info.innerHTML = `✅ Cadastrado: <b>${esc(v.nome)}</b>${v.modelo ? ' · ' + esc(v.modelo) : ''}${v.cor ? ' · ' + esc(v.cor) : ''}${trocou ? ' · <span class="alerta">nesta lavagem: ' + esc(mot.value.trim()) + '</span>' : ' · pode trocar o nome abaixo'}`;
+    info.className = 'mini ok'; padrao.hidden = !trocou;
+  } else {
+    if (mot.dataset.auto === '1') { mot.value = ''; mot.dataset.auto = ''; }
+    mod.hidden = false; padrao.hidden = true;
+    info.textContent = v ? 'Placa cadastrada, mas sem motorista. Informe abaixo:' : 'Placa nova na frota. Informe o motorista:'; info.className = 'mini alerta';
+  }
 }
 
 // ---------- campos do caixa e detalhamento por nome ----------
@@ -1060,17 +1075,19 @@ $app.addEventListener('click', async (ev) => {
       const v = veiculo(pl);
       const mot = (document.getElementById('motSul').value || '').trim();
       const mod = (document.getElementById('modSul').value || '').trim();
+      if (!mot) { toast('Informe o motorista', true); mostrarPlaca(); document.getElementById('motSul').focus(); break; }
       if (!v || !v.nome) {
-        if (!mot) { toast('Placa sem motorista: informe o motorista', true); mostrarPlaca(); document.getElementById('motSul').focus(); break; }
         if (v) { v.nome = mot; if (mod && !v.modelo) v.modelo = mod; } else S.frota.push({ placa: pl, nome: mot, ...(mod ? { modelo: mod } : {}) });
         salvarFrota().catch((e) => toast('Frota não salva: ' + e.message, true));
+      } else if (mot !== v.nome && document.getElementById('motPadrao').checked) {
+        v.nome = mot; salvarFrota().catch((e) => toast('Frota não salva: ' + e.message, true));
       }
       const tk = (document.getElementById('ticketSul').value || '').trim();
       if (tk) {
         const dup = Object.entries(S.meses).flatMap(([mk, M]) => Object.entries(M.dias || {}).flatMap(([dd, d]) => (d.lav || []).filter((x) => x.t === 'sulgas' && x.ticket === tk).map(() => `${dd}/${mk.slice(5)}`)));
         if (dup.length && !confirm(`O ticket ${tk} já foi lançado em ${dup.join(', ')}. Lançar mesmo assim?`)) break;
       }
-      addLav({ t: 'sulgas', v: Number(S.cfg.sulgasValor), placa: pl, mot: (veiculo(pl) || {}).nome, ...(tk ? { ticket: tk } : {}) });
+      addLav({ t: 'sulgas', v: Number(S.cfg.sulgasValor), placa: pl, mot, ...(tk ? { ticket: tk } : {}) });
       setTimeout(() => { const n = document.getElementById('ticketSul'); if (n) n.focus(); }, 50);
       break;
     }
@@ -1097,6 +1114,15 @@ $app.addEventListener('click', async (ev) => {
     case 'offCampo': { const c = campos().find((x) => x.k === el.dataset.k); if (confirm(`Tirar "${c.nome}" do caixa do dia? Os valores já lançados continuam no histórico e nos totais.`)) { c.ativo = false; await salvarCfg(); telaAjustes(); } break; }
     case 'onCampo': { const c = campos().find((x) => x.k === el.dataset.k); c.ativo = true; await salvarCfg(); telaAjustes(); break; }
     case 'subirCampo': { const i = campos().findIndex((x) => x.k === el.dataset.k); if (i > 0) { const l = campos(); [l[i - 1], l[i]] = [l[i], l[i - 1]]; await salvarCfg(); telaAjustes(); } break; }
+    case 'editSul': {
+      const d = diaAtual(), l = d.lav[+el.dataset.i];
+      const mot = prompt(`Motorista desta lavagem (placa ${l.placa || '—'}):`, l.mot || motoristaDe(l.placa));
+      if (mot === null) break;
+      const tk = prompt('Nº do ticket:', l.ticket || '');
+      if (mot.trim()) l.mot = mot.trim();
+      if (tk !== null) { if (tk.trim()) l.ticket = tk.trim(); else delete l.ticket; }
+      salvarMes(ctx.mk); telaDia(ctx.iso); break;
+    }
     case 'delLav': { const d = diaAtual(); d.lav.splice(+el.dataset.i, 1); salvarMes(ctx.mk); telaDia(ctx.iso); break; }
     case 'pres': { const d = diaAtual(); fixarPresenca(d); d.presenca[el.dataset.id] = el.dataset.s; salvarMes(ctx.mk); telaDia(ctx.iso); break; }
     case 'converterDia': { const d = diaAtual(); if (confirm('Os totais deste dia serão apagados para lançar carro a carro. Continuar?')) { delete d.pagas; delete d.valor; delete d.cort; delete d.sulgas; delete d.legado; d.lav = []; salvarMes(ctx.mk); telaDia(ctx.iso); } break; }
@@ -1229,6 +1255,7 @@ $app.addEventListener('input', (ev) => {
     return;
   }
   if (ev.target.id === 'placaSul') { mostrarPlaca(); return; }
+  if (ev.target.id === 'motSul') { ev.target.dataset.auto = ''; mostrarPlaca(true); return; }
   if (ev.target.id !== 'detNome') return;
   const m = ((S.cfg.nomes || {})[S.detAberto] || []).find((x) => x.nome === ev.target.value);
   const v = document.getElementById('detValor');
@@ -1237,7 +1264,7 @@ $app.addEventListener('input', (ev) => {
 
 $app.addEventListener('change', async (ev) => {
   const el = ev.target;
-  if (['detNome', 'detValor', 'detObs', 'placaSul', 'motSul', 'modSul', 'ticketSul'].includes(el.id)) return;
+  if (['detNome', 'detValor', 'detObs', 'placaSul', 'motSul', 'modSul', 'ticketSul', 'motPadrao'].includes(el.id)) return;
   if (el.dataset.act === 'irData' && el.value) { location.hash = '#/hoje/' + el.value; return; }
   if (el.dataset.act === 'feriado') { const d = diaAtual(); if (el.checked) d.feriado = true; else delete d.feriado; salvarMes(S.ctxDia.mk); telaDia(S.ctxDia.iso); return; }
   if (el.id === 'convArq' && el.files[0]) { const f = el.files[0]; try { await processarConvenio(await V.lerArquivo(f.name, await f.arrayBuffer()), f.name); } catch (e) { toast(e.message, true); } return; }

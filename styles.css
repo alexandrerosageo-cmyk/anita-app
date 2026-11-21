@@ -207,3 +207,6 @@ label.chk.feriado { font-size: .9rem; color: var(--texto); }
 @keyframes pulsar { 0%, 100% { box-shadow: 0 0 0 0 rgba(11,92,173,.5); } 50% { box-shadow: 0 0 0 6px rgba(11,92,173,0); } }
 main:has(.salvarbar) { padding-bottom: 4.5rem; }
 body:has(.salvarbar) .toast { bottom: calc(135px + env(safe-area-inset-bottom)); }
+.lavs .mot { font-weight: 600; }
+#novoMot .chk { margin: -.2rem 0 .4rem; }
+.mini .alerta { color: #9a4b00; font-weight: 600; }
