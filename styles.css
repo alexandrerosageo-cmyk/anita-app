@@ -210,3 +210,4 @@ body:has(.salvarbar) .toast { bottom: calc(135px + env(safe-area-inset-bottom));
 .lavs .mot { font-weight: 600; }
 #novoMot .chk { margin: -.2rem 0 .4rem; }
 .mini .alerta { color: #9a4b00; font-weight: 600; }
+.linha.cort input { border-color: #b99be6; }

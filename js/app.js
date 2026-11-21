@@ -5,7 +5,7 @@ import * as V from './convenio.js';
 import { EMAIL_BACKUP } from './firebase-config.js';
 import { criarStore, salvarConfigFirebase, interpretarConfig, lerConfigFirebase, usarFirebasePadrao } from './store.js';
 
-const VERSAO = '2.3.0';
+const VERSAO = '2.4.0';
 const $app = document.getElementById('app');
 const S = { store: null, cfg: null, funcs: [], frota: [], meses: {}, tipoSel: 'paga', salvando: 0 };
 
@@ -246,9 +246,12 @@ async function telaDia(iso) {
       </div>
       <datalist id="motList">${[...new Set(S.frota.map((v) => v.nome).filter(Boolean))].sort().map((n) => `<option value="${esc(n)}">`).join('')}</datalist>
       <datalist id="frotaList">${S.frota.map((v) => `<option value="${esc(v.placa)}">${esc(v.nome || '')} ${esc(v.modelo || '')}</option>`).join('')}</datalist>`
-    : `<div class="precos">${S.cfg.precos.map((pr, i) => `<button class="preco t-${S.tipoSel}" data-act="addLav" data-i="${i}"><b>${esc(pr.nome)}</b>${!mesmoRotulo(pr) ? `<small>${brl(pr.valor)}</small>` : ''}</button>`).join('')}</div>
+    : `${S.tipoSel === 'cortesia' ? `<div class="linha cort"><input id="cortNome" list="cortList" placeholder="Quem recebeu a cortesia?" autocomplete="off" value="${esc(S.cortNome || '')}"></div>
+      <datalist id="cortList">${((S.cfg.nomes || {}).cortesia || []).map((m) => `<option value="${esc(m.nome)}">`).join('')}</datalist>
+      <p class="mini">Escreva o nome e toque no serviço feito.</p>` : ''}
+      <div class="precos">${S.cfg.precos.map((pr, i) => `<button class="preco t-${S.tipoSel}" data-act="addLav" data-i="${i}"><b>${esc(pr.nome)}</b>${!mesmoRotulo(pr) ? `<small>${brl(pr.valor)}</small>` : ''}</button>`).join('')}</div>
       ${S.tipoSel === 'paga' ? `<div class="linha"><input id="outroValor" inputmode="decimal" placeholder="Outro valor (com desconto)"><button class="btn" data-act="addOutro">+ Adicionar</button></div>` : `<p class="mini">${S.tipoSel === 'cortesia' ? 'Cortesia conta como carro, mas entra com valor zero.' : 'Retorno (refeito por reclamação) não conta para meta nem para a base.'}</p>`}`}
-    ${lav.length ? `<ol class="lavs">${lav.map((l, i) => `<li class="t-${l.t}"><span>${C.TIPOS[l.t].nome}${l.ticket ? ' · tk ' + esc(l.ticket) : ''}${l.placa ? ' · ' + esc(l.placa) : ''}${l.t === 'sulgas' && (l.mot || motoristaDe(l.placa)) ? ' · <b class="mot">' + esc(l.mot || motoristaDe(l.placa)) + '</b>' : ''}${l.desc ? ' · ' + esc(l.desc) : ''}</span><b>${l.t === 'paga' || l.t === 'sulgas' ? brl(l.v) : '—'}</b>${l.t === 'sulgas' ? `<button class="x" data-act="editSul" data-i="${i}" aria-label="editar">✎</button>` : ''}<button class="x" data-act="delLav" data-i="${i}" aria-label="remover">✕</button></li>`).join('')}</ol>` : '<p class="vazio">Nenhuma lavagem lançada neste dia.</p>'}
+    ${lav.length ? `<ol class="lavs">${lav.map((l, i) => `<li class="t-${l.t}"><span>${C.TIPOS[l.t].nome}${l.ticket ? ' · tk ' + esc(l.ticket) : ''}${l.placa ? ' · ' + esc(l.placa) : ''}${l.t === 'sulgas' && (l.mot || motoristaDe(l.placa)) ? ' · <b class="mot">' + esc(l.mot || motoristaDe(l.placa)) + '</b>' : ''}${l.cliente ? ' · <b class="mot">' + esc(l.cliente) + '</b>' : ''}${l.desc ? ' · ' + esc(l.desc) : ''}</span><b>${l.t === 'paga' || l.t === 'sulgas' ? brl(l.v) : '—'}</b>${l.t === 'sulgas' ? `<button class="x" data-act="editSul" data-i="${i}" aria-label="editar">✎</button>` : l.t === 'cortesia' ? `<button class="x" data-act="editCort" data-i="${i}" aria-label="editar">✎</button>` : ''}<button class="x" data-act="delLav" data-i="${i}" aria-label="remover">✕</button></li>`).join('')}</ol>` : '<p class="vazio">Nenhuma lavagem lançada neste dia.</p>'}
   </section>`}
 
   <section class="card">
@@ -484,6 +487,14 @@ async function telaMes(mk) {
       ${dias.map((l) => { const r = l.dia.convSab.res; return `<tr data-href="#/hoje/${l.iso}"><td>${C.pad(l.d)} <small>${C.ehSabado(l.iso) ? 'sáb' : 'feriado'}</small></td><td>${r.carros}</td><td>${r.pico}</td><td class="${r.extras ? 'neg' : ''}">${r.extras}</td><td>${brl(r.total)}</td></tr>`; }).join('')}
       </tbody></table>
       <button class="btn link" data-act="convCopiar">Copiar resumo para enviar</button></section>`;
+  })()}
+
+  ${(() => {
+    const cs = ap.lista.flatMap((l) => ((l.dia || {}).lav || []).filter((x) => x.t === 'cortesia').map((x) => ({ ...x, iso: l.iso })));
+    if (!cs.length) return '';
+    const porNome = {}; for (const c of cs) { const k = c.cliente || '(sem nome)'; porNome[k] = (porNome[k] || 0) + 1; }
+    return `<section class="card"><h3>Cortesias <small>${cs.length} no mês</small></h3>
+      <table class="tab"><tbody>${cs.map((c) => `<tr data-href="#/hoje/${c.iso}"><td>${dataBR(c.iso).slice(0, 5)}</td><td><b>${esc(c.cliente || '(sem nome)')}</b>${c.desc ? `<small>${esc(c.desc)}</small>` : ''}</td><td class="r"><small>${porNome[c.cliente || '(sem nome)'] > 1 ? porNome[c.cliente || '(sem nome)'] + 'ª no mês' : ''}</small></td></tr>`).join('')}</tbody></table></section>`;
   })()}
 
   <section class="card">
@@ -1067,7 +1078,17 @@ $app.addEventListener('click', async (ev) => {
   const ctx = S.ctxDia;
   switch (act) {
     case 'tipo': S.tipoSel = el.dataset.t; telaDia(ctx.iso); break;
-    case 'addLav': { const pr = S.cfg.precos[+el.dataset.i]; const t = S.tipoSel; addLav({ t, v: t === 'paga' ? pr.valor : 0, desc: !mesmoRotulo(pr) || t !== 'paga' ? pr.nome : undefined }); break; }
+    case 'addLav': {
+      const pr = S.cfg.precos[+el.dataset.i]; const t = S.tipoSel;
+      let cliente;
+      if (t === 'cortesia') {
+        cliente = (document.getElementById('cortNome').value || '').trim();
+        if (!cliente) { toast('Informe quem recebeu a cortesia', true); document.getElementById('cortNome').focus(); break; }
+        lembrarNome('cortesia', cliente, 0); S.cortNome = '';
+      }
+      addLav({ t, v: t === 'paga' ? pr.valor : 0, desc: !mesmoRotulo(pr) || t !== 'paga' ? pr.nome : undefined, ...(cliente ? { cliente } : {}) });
+      break;
+    }
     case 'addOutro': { const v = num(document.getElementById('outroValor').value); if (v > 0) addLav({ t: 'paga', v }); break; }
     case 'addSulgas': {
       const pl = normPlaca(document.getElementById('placaSul').value);
@@ -1121,6 +1142,13 @@ $app.addEventListener('click', async (ev) => {
       const tk = prompt('Nº do ticket:', l.ticket || '');
       if (mot.trim()) l.mot = mot.trim();
       if (tk !== null) { if (tk.trim()) l.ticket = tk.trim(); else delete l.ticket; }
+      salvarMes(ctx.mk); telaDia(ctx.iso); break;
+    }
+    case 'editCort': {
+      const d = diaAtual(), l = d.lav[+el.dataset.i];
+      const nome = prompt('Quem recebeu a cortesia?', l.cliente || '');
+      if (nome === null) break;
+      if (nome.trim()) { l.cliente = nome.trim(); lembrarNome('cortesia', l.cliente, 0); } else delete l.cliente;
       salvarMes(ctx.mk); telaDia(ctx.iso); break;
     }
     case 'delLav': { const d = diaAtual(); d.lav.splice(+el.dataset.i, 1); salvarMes(ctx.mk); telaDia(ctx.iso); break; }
@@ -1256,6 +1284,7 @@ $app.addEventListener('input', (ev) => {
   }
   if (ev.target.id === 'placaSul') { mostrarPlaca(); return; }
   if (ev.target.id === 'motSul') { ev.target.dataset.auto = ''; mostrarPlaca(true); return; }
+  if (ev.target.id === 'cortNome') { S.cortNome = ev.target.value; return; }
   if (ev.target.id !== 'detNome') return;
   const m = ((S.cfg.nomes || {})[S.detAberto] || []).find((x) => x.nome === ev.target.value);
   const v = document.getElementById('detValor');
@@ -1264,7 +1293,7 @@ $app.addEventListener('input', (ev) => {
 
 $app.addEventListener('change', async (ev) => {
   const el = ev.target;
-  if (['detNome', 'detValor', 'detObs', 'placaSul', 'motSul', 'modSul', 'ticketSul', 'motPadrao'].includes(el.id)) return;
+  if (['detNome', 'detValor', 'detObs', 'placaSul', 'motSul', 'modSul', 'ticketSul', 'motPadrao', 'cortNome'].includes(el.id)) return;
   if (el.dataset.act === 'irData' && el.value) { location.hash = '#/hoje/' + el.value; return; }
   if (el.dataset.act === 'feriado') { const d = diaAtual(); if (el.checked) d.feriado = true; else delete d.feriado; salvarMes(S.ctxDia.mk); telaDia(S.ctxDia.iso); return; }
   if (el.id === 'convArq' && el.files[0]) { const f = el.files[0]; try { await processarConvenio(await V.lerArquivo(f.name, await f.arrayBuffer()), f.name); } catch (e) { toast(e.message, true); } return; }
@@ -1304,6 +1333,7 @@ $app.addEventListener('change', async (ev) => {
 $app.addEventListener('keydown', (ev) => {
   if (ev.key !== 'Enter') return;
   if (ev.target.id === 'ticketSul') { ev.preventDefault(); document.getElementById('placaSul').focus(); }
+  if (ev.target.id === 'cortNome') { ev.preventDefault(); ev.target.blur(); }
   if (['placaSul', 'motSul', 'modSul'].includes(ev.target.id)) { ev.preventDefault(); document.querySelector('[data-act=addSulgas]').click(); }
   if (ev.target.id === 'outroValor') { ev.preventDefault(); document.querySelector('[data-act=addOutro]').click(); }
   if (['detNome', 'detValor', 'detObs'].includes(ev.target.id)) { ev.preventDefault(); document.querySelector('[data-act=addDet]').click(); }
