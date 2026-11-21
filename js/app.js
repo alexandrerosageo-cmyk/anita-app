@@ -5,7 +5,7 @@ import * as V from './convenio.js';
 import { EMAIL_BACKUP } from './firebase-config.js';
 import { criarStore, salvarConfigFirebase, interpretarConfig, lerConfigFirebase, usarFirebasePadrao } from './store.js';
 
-const VERSAO = '2.5.0';
+const VERSAO = '2.5.1';
 const $app = document.getElementById('app');
 const S = { store: null, cfg: null, funcs: [], frota: [], meses: {}, tipoSel: 'paga', salvando: 0 };
 
@@ -753,7 +753,11 @@ async function telaAnalise(tipo, ref) {
 
   <section class="card"><h3>Lavagens <small>${t.contados} contadas</small></h3>
     <p>Pagas <b>${t.pagas}</b> · Sulgás <b>${t.sulgas}</b> · Cortesias <b>${t.cort}</b>${t.retornos ? ` · Retornos <b>${t.retornos}</b>` : ''}</p>
-    ${an.servicos.length ? `<table class="tab"><thead><tr><th>Serviço / preço</th><th>Qtd</th><th>Total</th></tr></thead><tbody>${an.servicos.slice(0, 10).map((x) => `<tr><td>${esc(x.nome || brl(x.valor))}</td><td>${x.n}</td><td>${brl(x.total)}</td></tr>`).join('')}</tbody></table>` : '<p class="mini">O detalhamento por serviço aparece para as lavagens lançadas carro a carro no app.</p>'}
+    <p class="mini">Valor médio por lavagem paga: <b>${brl(t.ticket)}</b>.</p>
+    ${an.servicos.length ? (() => { const nApp = an.servicos.reduce((a, x) => a + x.n, 0); return `<h4>Quais serviços saem mais</h4>
+      <p class="mini">Só conta as <b>${nApp}</b> lavagens pagas lançadas carro a carro no app${t.pagas > nApp ? ` (de ${t.pagas} no período; a planilha antiga guardava só o total do dia, sem o preço de cada uma)` : ''}.</p>
+      <table class="tab"><thead><tr><th>Serviço / preço</th><th>Qtd</th><th>% </th><th>Total</th></tr></thead><tbody>${an.servicos.slice(0, 10).map((x) => `<tr><td>${esc(x.nome || brl(x.valor))}</td><td>${x.n}</td><td>${Math.round((x.n / nApp) * 100)}%</td><td>${brl(x.total)}</td></tr>`).join('')}</tbody></table>
+      ${an.servicos.every((x) => !x.nome) ? '<p class="mini">Dica: dê nomes aos botões de preço em ⚙️ Ajustes (ex.: "Completa SUV") e esta tabela passa a mostrar o serviço.</p>' : ''}`; })() : '<p class="mini">Quais serviços saem mais aparece conforme as lavagens forem lançadas carro a carro no app.</p>'}
   </section>
 
   <section class="card"><h3>Formas de recebimento</h3>
