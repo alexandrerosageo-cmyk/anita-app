@@ -236,3 +236,8 @@ body:has(.salvarbar) .toast { bottom: calc(135px + env(safe-area-inset-bottom));
 .matriz .preco b { font-size: 1.05rem; }
 .matriz .preco small { display: none; }
 .precos.outros { margin-top: .45rem; }
+
+.preco { position: relative; }
+.preco .qtd { position: absolute; top: -7px; right: -5px; min-width: 1.45rem; height: 1.45rem; padding: 0 .3rem; border-radius: 1rem; background: #f2b632; color: #0a2540; font-style: normal; font-weight: 800; font-size: .8rem; display: flex; align-items: center; justify-content: center; box-shadow: 0 1px 3px rgba(0,0,0,.25); border: 2px solid #fff; }
+.preco.t-cortesia .qtd { background: #b99be6; color: #fff; } .preco.t-retorno .qtd { background: var(--erro); color: #fff; }
+.matriz { padding-top: 6px; }

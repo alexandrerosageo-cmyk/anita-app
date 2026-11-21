@@ -5,7 +5,7 @@ import * as V from './convenio.js';
 import { EMAIL_BACKUP } from './firebase-config.js';
 import { criarStore, salvarConfigFirebase, interpretarConfig, lerConfigFirebase, usarFirebasePadrao } from './store.js';
 
-const VERSAO = '2.8.0';
+const VERSAO = '2.8.1';
 const $app = document.getElementById('app');
 const S = { store: null, cfg: null, funcs: [], frota: [], meses: {}, tipoSel: 'paga', salvando: 0 };
 
@@ -47,6 +47,13 @@ function gruposPreco() {
   if (outros.length) out.push({ nome: out.length ? 'Outros' : '', itens: outros });
   return out;
 }
+// quantas lavagens deste botão já foram lançadas no dia aberto (no tipo selecionado)
+function contaLancadas(pr) {
+  if (!S.ctxDia) return 0;
+  const dia = (S.meses[S.ctxDia.mk] || { dias: {} }).dias[S.ctxDia.dd] || {};
+  return (dia.lav || []).filter((l) => l.t === S.tipoSel && (l.desc ? l.desc === pr.nome : (S.tipoSel === 'paga' && Math.abs((Number(l.v) || 0) - Number(pr.valor)) < 0.005))).length;
+}
+
 // tabela como a ficha do balcão: colunas = tipo de lavagem, linhas = tamanho do veículo
 function tabelaPrecos() {
   const TAM = [['normal', 'Normais'], ['suv', "SUV's"], ['pick', 'Pick-Ups']];
@@ -55,7 +62,8 @@ function tabelaPrecos() {
   const usados = new Set();
   const cel = {};
   for (const g of grupos) for (const [pr, i] of g.itens) { const t = tamDe(pr); if (t && !cel[g.nome + t]) { cel[g.nome + t] = [pr, i]; usados.add(i); } }
-  const botao = ([pr, i], rot) => `<button class="preco t-${S.tipoSel} ${grupoPreco(pr)}" data-act="addLav" data-i="${i}"><b>${esc(rot)}</b><small>${brl(pr.valor)}</small></button>`;
+  const qtd = (pr) => contaLancadas(pr);
+  const botao = ([pr, i], rot) => { const n = qtd(pr); return `<button class="preco t-${S.tipoSel} ${grupoPreco(pr)}" data-act="addLav" data-i="${i}">${n ? `<em class="qtd">${n}</em>` : ''}<b>${esc(rot)}</b><small>${brl(pr.valor)}</small></button>`; };
   const resto = S.cfg.precos.map((pr, i) => [pr, i]).filter(([, i]) => !usados.has(i)).sort((a, b) => a[0].valor - b[0].valor);
   if (!grupos.length) return `<div class="precos">${resto.map((it) => botao(it, it[0].nome)).join('')}</div>`;
   return `<div class="matriz" style="grid-template-columns: auto repeat(${grupos.length}, 1fr)">
@@ -222,6 +230,7 @@ async function telaDia(iso) {
   if (S.ctxDia && S.ctxDia.iso !== iso) { S.detAberto = null; if (S.pendente[S.ctxDia.mk]) gravarMes(S.ctxDia.mk).catch(() => {}); }
   const mk = mkDe(iso), dd = iso.slice(8);
   const M = await mes(mk);
+  S.ctxDia = { iso, mk, dd };
   const dia = M.dias[dd] || {};
   const nova = C.regraNova(iso, S.cfg);
   const p = C.premioDia(dia, iso, S.cfg);
