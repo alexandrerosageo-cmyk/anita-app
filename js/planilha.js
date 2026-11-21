@@ -39,7 +39,7 @@ export function montarPlanilha({ cfg, funcs, frota, meses }) {
       if (d.convSab) { const r = d.convSab.res; conv.push([l.iso, C.ehSabado(l.iso) ? 'sábado' : 'feriado', r.carros, r.pico, r.momentoPico || '', r.extras, r.cfg.vagas, r.valorDia, r.valorExtras, r.total]); }
       (d.lav || []).forEach((x, i) => lavagens.push([l.iso, i + 1, C.TIPOS[x.t] ? C.TIPOS[x.t].nome : x.t, x.v || 0, x.ticket || '', x.placa || '', x.cliente || x.mot || (x.placa ? motorista(x.placa) : ''), x.desc || '']));
       for (const [k, lst] of Object.entries(d.det || {})) for (const p of lst) porNome.push([l.iso, (campos.find((c) => c.k === k) || {}).nome || k, p.nome, p.valor, p.obs || '']);
-      if (!Array.isArray(d.lav) && d.sulgas && !(M.sulgasLista || []).some((s) => s.data === l.iso)) for (let i = 0; i < d.sulgas; i++) sulgas.push([l.iso, '', '', '', cfg.sulgasValor || 0, 'planilha (sem placa)']);
+      if (d.sulgas && !(M.sulgasLista || []).some((s) => s.data === l.iso)) for (let i = 0; i < d.sulgas; i++) sulgas.push([l.iso, '', '', '', cfg.sulgasValor || 0, 'planilha (sem placa)']);
       for (const x of d.lav || []) if (x.t === 'sulgas') sulgas.push([l.iso, x.ticket || '', x.placa || '', x.mot || motorista(x.placa), x.v || 0, 'app']);
     }
     for (const s of M.sulgasLista || []) sulgas.push([s.data, s.ticket || '', s.placa, s.nome || motorista(s.placa), s.valor, 'planilha']);

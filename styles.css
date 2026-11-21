@@ -211,3 +211,6 @@ body:has(.salvarbar) .toast { bottom: calc(135px + env(safe-area-inset-bottom));
 #novoMot .chk { margin: -.2rem 0 .4rem; }
 .mini .alerta { color: #9a4b00; font-weight: 600; }
 .linha.cort input { border-color: #b99be6; }
+.planilha summary { font-weight: 400; font-size: .92rem; }
+.planilha summary small { display: inline; margin-left: .3rem; }
+.planilha .grade2 { margin-top: .6rem; }

@@ -5,7 +5,7 @@ import * as V from './convenio.js';
 import { EMAIL_BACKUP } from './firebase-config.js';
 import { criarStore, salvarConfigFirebase, interpretarConfig, lerConfigFirebase, usarFirebasePadrao } from './store.js';
 
-const VERSAO = '2.4.1';
+const VERSAO = '2.5.0';
 const $app = document.getElementById('app');
 const S = { store: null, cfg: null, funcs: [], frota: [], meses: {}, tipoSel: 'paga', salvando: 0 };
 
@@ -186,6 +186,7 @@ function moldura(corpo, titulo) {
 
 // ---------- TELA: dia ----------
 async function telaDia(iso) {
+  if (S.ctxDia && S.ctxDia.iso !== iso) { S.abrirPlanilha = false; }
   if (S.ctxDia && S.ctxDia.iso !== iso) { S.detAberto = null; if (S.pendente[S.ctxDia.mk]) gravarMes(S.ctxDia.mk).catch(() => {}); }
   const mk = mkDe(iso), dd = iso.slice(8);
   const M = await mes(mk);
@@ -194,7 +195,7 @@ async function telaDia(iso) {
   const p = C.premioDia(dia, iso, S.cfg);
   const prox = nova ? C.proximaFaixa(p.contados, iso, S.cfg) : null;
   // formulário de totais só para dias da planilha que já têm lavagens contadas; o resto lança carro a carro
-  const legadoAgregado = !Array.isArray(dia.lav) && !!(dia.pagas || dia.valor || dia.cort || dia.sulgas);
+  const legadoAgregado = !!(dia.pagas || dia.valor || dia.cort || dia.sulgas);
   const pres = C.presencaDia(M.dias[dd] || (C.ehSabado(iso) ? null : {}), iso, S.funcs, (M.folhaLegado || []).map((e) => e.id));
   const funcs = funcsAtivos(iso);
   for (const id of Object.keys(pres)) if (!funcs.find((f) => f.id === id)) { const f = S.funcs.find((x) => x.id === id); if (f) funcs.push(f); }
@@ -224,18 +225,18 @@ async function telaDia(iso) {
   </section>
 
   ${legadoAgregado ? `
-  <section class="card">
-    <h3>Lavagens (dia importado da planilha)</h3>
+  <section class="card planilha">
+    <details ${S.abrirPlanilha ? 'open' : ''} data-planilha><summary><b>Da planilha:</b> ${dia.pagas || 0} pagas (${brl(dia.valor)}) · ${dia.cort || 0} cortesias · ${dia.sulgas || 0} Sulgás <small>tocar para corrigir</small></summary>
     <div class="grade2">
       <label>Pagas<input inputmode="numeric" data-campo="pagas" value="${dia.pagas || ''}"></label>
       <label>Valor das pagas<input inputmode="decimal" data-campo="valor" value="${fmtN(dia.valor)}"></label>
       <label>Cortesias<input inputmode="numeric" data-campo="cort" value="${dia.cort || ''}"></label>
       <label>Sulgás<input inputmode="numeric" data-campo="sulgas" value="${dia.sulgas || ''}"></label>
     </div>
-    <button class="btn link" data-act="converterDia">Passar a lançar carro a carro</button>
-  </section>` : `
+    <p class="mini">Lavagens lançadas abaixo somam a estes totais. Para lançar tudo carro a carro, zere os campos.</p></details>
+  </section>` : ''}
   <section class="card">
-    <h3>Lançar lavagem</h3>
+    <h3>Lançar lavagem${legadoAgregado ? ' <small>além das da planilha</small>' : ''}</h3>
     <div class="seg" role="tablist">${['paga', 'cortesia', 'sulgas', 'retorno'].map((t) => `<button data-act="tipo" data-t="${t}" class="${S.tipoSel === t ? 'on t-' + t : ''}">${C.TIPOS[t].nome}</button>`).join('')}</div>
     ${S.tipoSel === 'sulgas' ? `
       <div class="linha"><input id="ticketSul" inputmode="numeric" placeholder="Nº do ticket" autocomplete="off" style="max-width:8.5rem"><input id="placaSul" list="frotaList" placeholder="Placa do veículo Sulgás" autocapitalize="characters" autocomplete="off">
@@ -252,8 +253,8 @@ async function telaDia(iso) {
       <p class="mini">Escreva o nome e toque no serviço feito.</p>` : ''}
       <div class="precos">${S.cfg.precos.map((pr, i) => `<button class="preco t-${S.tipoSel}" data-act="addLav" data-i="${i}"><b>${esc(pr.nome)}</b>${!mesmoRotulo(pr) ? `<small>${brl(pr.valor)}</small>` : ''}</button>`).join('')}</div>
       ${S.tipoSel === 'paga' ? `<div class="linha"><input id="outroValor" inputmode="decimal" placeholder="Outro valor (com desconto)"><button class="btn" data-act="addOutro">+ Adicionar</button></div>` : `<p class="mini">${S.tipoSel === 'cortesia' ? 'Cortesia conta como carro, mas entra com valor zero.' : 'Retorno (refeito por reclamação) não conta para meta nem para a base.'}</p>`}`}
-    ${lav.length ? `<ol class="lavs">${lav.map((l, i) => `<li class="t-${l.t}"><span>${C.TIPOS[l.t].nome}${l.ticket ? ' · tk ' + esc(l.ticket) : ''}${l.placa ? ' · ' + esc(l.placa) : ''}${l.t === 'sulgas' && (l.mot || motoristaDe(l.placa)) ? ' · <b class="mot">' + esc(l.mot || motoristaDe(l.placa)) + '</b>' : ''}${l.cliente ? ' · <b class="mot">' + esc(l.cliente) + '</b>' : ''}${l.desc ? ' · ' + esc(l.desc) : ''}</span><b>${l.t === 'paga' || l.t === 'sulgas' ? brl(l.v) : '—'}</b>${l.t === 'sulgas' ? `<button class="x" data-act="editSul" data-i="${i}" aria-label="editar">✎</button>` : l.t === 'cortesia' ? `<button class="x" data-act="editCort" data-i="${i}" aria-label="editar">✎</button>` : ''}<button class="x" data-act="delLav" data-i="${i}" aria-label="remover">✕</button></li>`).join('')}</ol>` : '<p class="vazio">Nenhuma lavagem lançada neste dia.</p>'}
-  </section>`}
+    ${lav.length ? `<ol class="lavs">${lav.map((l, i) => `<li class="t-${l.t}"><span>${C.TIPOS[l.t].nome}${l.ticket ? ' · tk ' + esc(l.ticket) : ''}${l.placa ? ' · ' + esc(l.placa) : ''}${l.t === 'sulgas' && (l.mot || motoristaDe(l.placa)) ? ' · <b class="mot">' + esc(l.mot || motoristaDe(l.placa)) + '</b>' : ''}${l.cliente ? ' · <b class="mot">' + esc(l.cliente) + '</b>' : ''}${l.desc ? ' · ' + esc(l.desc) : ''}</span><b>${l.t === 'paga' || l.t === 'sulgas' ? brl(l.v) : '—'}</b>${l.t === 'sulgas' ? `<button class="x" data-act="editSul" data-i="${i}" aria-label="editar">✎</button>` : l.t === 'cortesia' ? `<button class="x" data-act="editCort" data-i="${i}" aria-label="editar">✎</button>` : ''}<button class="x" data-act="delLav" data-i="${i}" aria-label="remover">✕</button></li>`).join('')}</ol>` : (legadoAgregado ? '' : '<p class="vazio">Nenhuma lavagem lançada neste dia.</p>')}
+  </section>
 
   <section class="card">
     <h3>Caixa do dia <small>${brl(p.receita)} · estacionamento ${brl(p.estacionamento)}</small></h3>
@@ -412,11 +413,8 @@ function fixarPresenca(dia) {
 }
 function addLav(item) {
   const dia = diaAtual();
-  if (!Array.isArray(dia.lav)) {
-    dia.lav = [];
-    // dia veio da planilha sem lavagens: passa a ser um dia do app (prêmio calculado pela regra)
-    if (!(dia.pagas || dia.valor || dia.cort || dia.sulgas)) { delete dia.legado; delete dia.premioLeg; delete dia.pagas; delete dia.valor; delete dia.cort; delete dia.sulgas; }
-  }
+  if (!Array.isArray(dia.lav)) dia.lav = [];
+  delete dia.legado; delete dia.premioLeg; // dia passa a ser do app: prêmio recalculado pela fórmula
   fixarPresenca(dia);
   dia.lav.push(item); salvarMes(S.ctxDia.mk); telaDia(S.ctxDia.iso);
   if (navigator.vibrate) navigator.vibrate(15);
@@ -892,7 +890,7 @@ async function telaSulgas(iso) {
     for (const [dd, dia] of Object.entries(M.dias)) {
       const di = `${mk}-${dd}`; if (di < per.ini || di > per.fim) continue;
       (dia.lav || []).forEach((l) => { if (l.t === 'sulgas') itens.push({ data: di, placa: l.placa || '', nome: l.mot || '', valor: l.v, ticket: l.ticket || '' }); });
-      if (!Array.isArray(dia.lav) && dia.sulgas && !(M.sulgasLista || []).some((s) => s.data === di)) for (let i = 0; i < dia.sulgas; i++) itens.push({ data: di, placa: '(sem placa)', valor: S.cfg.sulgasValor });
+      if (dia.sulgas && !(M.sulgasLista || []).some((s) => s.data === di)) for (let i = 0; i < dia.sulgas; i++) itens.push({ data: di, placa: '(sem placa)', valor: S.cfg.sulgasValor });
     }
   }
   itens.sort((a, b) => a.data.localeCompare(b.data));
@@ -1312,6 +1310,7 @@ $app.addEventListener('change', async (ev) => {
   if (el.dataset.campo && S.ctxDia) {
     const d = diaAtual(); const k = el.dataset.campo;
     d[k] = k === 'obs' ? el.value : (k === 'valor' ? num(el.value) : Math.round(num(el.value)));
+    if (k !== 'obs') { delete d.legado; delete d.premioLeg; S.abrirPlanilha = true; if (!d[k]) delete d[k]; }
     salvarMes(S.ctxDia.mk); if (k !== 'obs') redesenhar(() => telaDia(S.ctxDia.iso)); return;
   }
   if (el.dataset.folha) {

@@ -33,16 +33,14 @@ export function apuraDia(dia, cfg) {
   dia = dia || {};
   const sv = Number(cfg.sulgasValor) || 48;
   let pagas = 0, cort = 0, sulgas = 0, retornos = 0, valorPagas = 0;
-  if (Array.isArray(dia.lav) && dia.lav.length) {
-    for (const l of dia.lav) {
-      if (l.t === 'paga') { pagas++; valorPagas += Number(l.v) || 0; }
-      else if (l.t === 'cortesia') cort++;
-      else if (l.t === 'sulgas') sulgas++;
-      else if (l.t === 'retorno') retornos++;
-    }
-  } else {
-    pagas = Number(dia.pagas) || 0; cort = Number(dia.cort) || 0; sulgas = Number(dia.sulgas) || 0;
-    valorPagas = Number(dia.valor) || 0;
+  // totais vindos da planilha + lavagens lançadas carro a carro (somam)
+  pagas = Number(dia.pagas) || 0; cort = Number(dia.cort) || 0; sulgas = Number(dia.sulgas) || 0;
+  valorPagas = Number(dia.valor) || 0;
+  for (const l of Array.isArray(dia.lav) ? dia.lav : []) {
+    if (l.t === 'paga') { pagas++; valorPagas += Number(l.v) || 0; }
+    else if (l.t === 'cortesia') cort++;
+    else if (l.t === 'sulgas') sulgas++;
+    else if (l.t === 'retorno') retornos++;
   }
   const contados = pagas + cort + sulgas;
   const base = r2(valorPagas + sulgas * sv);
