@@ -5,7 +5,7 @@ import * as V from './convenio.js';
 import { EMAIL_BACKUP } from './firebase-config.js';
 import { criarStore, salvarConfigFirebase, interpretarConfig, lerConfigFirebase, usarFirebasePadrao } from './store.js';
 
-const VERSAO = '2.11.0';
+const VERSAO = '2.11.1';
 const $app = document.getElementById('app');
 const S = { store: null, cfg: null, funcs: [], frota: [], meses: {}, tipoSel: 'paga', salvando: 0 };
 
@@ -105,6 +105,8 @@ function tipoDaPlanilha(desc) {
   if (/luz|energia|internet|telefone/.test(d)) return 'luz';
   return 'outros';
 }
+const MES_PARCIAL_PLANILHA = '2026-11'; // traz da planilha só o que não sai da folha/caixa do app
+const TIPOS_AUTO = ['folha', 'vt', 'premios', 'impostos'];
 function migrarDespesasPlanilha(mk, M) {
   if (!M) return false;
   if (!(M.despesasLegado || []).length) {
@@ -112,10 +114,16 @@ function migrarDespesasPlanilha(mk, M) {
     if (mk <= ULTIMO_MES_PLANILHA && !M.semAuto && Object.keys(M.dias || {}).length) { M.semAuto = true; return true; } // meses da planilha nunca somam folha automática
     return false;
   }
-  if (mk <= ULTIMO_MES_PLANILHA) {
+  if (mk <= MES_PARCIAL_PLANILHA) {
+    const parcial = mk > ULTIMO_MES_PLANILHA;
     M.despesas = M.despesas || [];
-    M.despesasLegado.forEach((x, i) => M.despesas.push({ id: `pl${mk.replace('-', '')}${i}`, data: `${mk}-01`, cat: tipoDaPlanilha(x.desc), forn: '', desc: x.desc, valor: Number(x.valor) || 0, ...(x.obs ? { obs: x.obs } : {}), origem: 'planilha' }));
-    M.semAuto = true; // folha, VT e impostos já estão nas linhas da planilha
+    M.despesasLegado.forEach((x, i) => {
+      const id = `pl${mk.replace('-', '')}${i}`, cat = tipoDaPlanilha(x.desc), valor = Number(x.valor) || 0;
+      if (parcial && TIPOS_AUTO.includes(cat)) return;                       // vem da folha/caixa do app
+      if (M.despesas.some((d) => d.id === id || (normTxt(d.desc) === normTxt(x.desc) && Math.abs((Number(d.valor) || 0) - valor) < 0.01))) return; // já lançada
+      M.despesas.push({ id, data: `${mk}-01`, cat, forn: '', desc: x.desc, valor, ...(x.obs ? { obs: x.obs } : {}), origem: 'planilha' });
+    });
+    if (!parcial) M.semAuto = true; // folha, VT e impostos já estão nas linhas da planilha
   }
   delete M.despesasLegado;
   return true;
@@ -951,7 +959,7 @@ async function telaDespesas(mk) {
   <div class="navdata"><a class="btn ic" href="#/despesas/${somaMes(mk, -1)}">‹</a><b class="titmes">${nomeMes(mk)}</b><a class="btn ic" href="#/despesas/${somaMes(mk, 1)}">›</a></div>
   <div class="kpis"><div class="kpi"><small>Despesas lançadas</small><b>${brl(total)}</b></div><div class="kpi"><small>Lançamentos</small><b>${lista.length}</b></div></div>
   ${editor || `<div class="linha"><button class="btn grande" data-act="novaDesp">+ Nova despesa</button></div>
-    ${(S.cfg.despesasFixas || []).length && !fixasLancadas && mk > ULTIMO_MES_PLANILHA ? `<button class="btn link" data-act="lancarFixas">Lançar despesas fixas do mês (${S.cfg.despesasFixas.map((d) => esc(d.desc)).join(', ')})</button>` : ''}`}
+    ${(S.cfg.despesasFixas || []).length && !fixasLancadas && mk > MES_PARCIAL_PLANILHA ? `<button class="btn link" data-act="lancarFixas">Lançar despesas fixas do mês (${S.cfg.despesasFixas.map((d) => esc(d.desc)).join(', ')})</button>` : ''}`}
 
   ${autoMes ? `<p class="mini centro">Salários, VT, prêmios e impostos entram sozinhos (da folha e do caixa) no resultado do mês. Aqui lance as demais despesas.</p>` : ''}
   ${lista.length ? `<section class="card"><h3>Por tipo</h3>${barras(porTipo(lista))}</section>` : ''}
