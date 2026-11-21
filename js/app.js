@@ -1,10 +1,11 @@
 import * as C from './calc.js';
 import { montarPlanilha, nomeArquivoBackup } from './planilha.js';
 import * as A from './analise.js';
+import * as V from './convenio.js';
 import { EMAIL_BACKUP } from './firebase-config.js';
 import { criarStore, salvarConfigFirebase, interpretarConfig, lerConfigFirebase, usarFirebasePadrao } from './store.js';
 
-const VERSAO = '1.9.1';
+const VERSAO = '2.0.0';
 const $app = document.getElementById('app');
 const S = { store: null, cfg: null, funcs: [], frota: [], meses: {}, tipoSel: 'paga', salvando: 0 };
 
@@ -171,7 +172,8 @@ async function telaDia(iso) {
     <label class="datapick"><b>${SEM[C.diaSemana(iso)]}</b> ${dataBR(iso)}<input type="date" value="${iso}" data-act="irData"></label>
     <a class="btn ic" href="#/hoje/${somaDias(iso, 1)}">›</a>
   </div>
-  ${iso !== hojeISO() ? `<a class="hojelink" href="#/hoje/${hojeISO()}">voltar para hoje</a>` : ''}
+  <div class="sublinha">${iso !== hojeISO() ? `<a class="hojelink" href="#/hoje/${hojeISO()}">voltar para hoje</a>` : '<span></span>'}
+    ${C.ehDomingo(iso) || C.ehSabado(iso) ? '' : `<label class="chk feriado"><input type="checkbox" data-act="feriado" ${dia.feriado ? 'checked' : ''}> Feriado</label>`}</div>
 
   <section class="card destaque nivel${p.faixa.nivel}">
     <div class="placar">
@@ -222,12 +224,74 @@ async function telaDia(iso) {
     ${funcs.map((f) => `<div class="pres"><span>${esc(f.nome)}<small>${esc(f.funcao || '')}</small></span><div class="seg mini">${['T', 'F', 'J', 'X'].map((s) => `<button data-act="pres" data-id="${f.id}" data-s="${s}" class="${(pres[f.id] || 'X') === s ? 'on s-' + s : ''}">${C.PRESENCA[s].curto}</button>`).join('')}</div></div>`).join('')}
   </section>`}
 
+  ${C.ehSabado(iso) || dia.feriado || dia.convSab ? blocoConvenio(dia, iso) : ''}
+
   <section class="card">
     <h3>Observações</h3>
     <textarea data-campo="obs" rows="2" placeholder="Mensalista novo, ocorrência, etc.">${esc(dia.obs || '')}</textarea>
   </section>`;
   $app.innerHTML = moldura(corpo, 'Lançamento do dia');
   S.ctxDia = { iso, mk, dd };
+}
+
+// ---------- convênio de sábados/feriados ----------
+const cfgConv = () => ({ ...V.CONV_PADRAO, ...(S.cfg.convSab || {}) });
+function blocoConvenio(dia, iso) {
+  const c = cfgConv(), cv = dia.convSab;
+  if (!cv) return `<section class="card conv"><h3>Convênio ${esc(c.nome)}</h3>
+    <p class="mini">Suba o relatório do sistema do estacionamento (Excel, CSV) ou cole o texto copiado da tela. O app separa os carros com "${esc(c.filtro)}" na tabela de preço e calcula as vagas por hora.</p>
+    <label class="btn arquivo">📄 Subir relatório<input type="file" id="convArq" accept=".xlsx,.xls,.csv,.txt,.htm,.html" hidden></label>
+    <details><summary class="mini">ou colar o texto</summary><textarea id="convTxt" rows="5" placeholder="Cole aqui as linhas copiadas do relatório (com o cabeçalho)"></textarea><button class="btn" data-act="convColar">Calcular</button></details>
+  </section>`;
+  const r = cv.res, mudou = ['valorDia', 'vagas', 'valorExtra', 'regra'].some((k) => String(r.cfg[k]) !== String(c[k]));
+  const maxH = Math.max(c.vagas, ...r.horas.map((h) => h.max));
+  return `<section class="card conv"><h3>Convênio ${esc(c.nome)} <small>${brl(r.total)}</small></h3>
+    <div class="placar conv-placar"><div><span class="grande">${r.carros}</span><small>carros do convênio</small></div><div><span class="grande">${r.pico}</span><small>pico simultâneo${r.momentoPico ? ' às ' + r.momentoPico : ''}</small></div><div><span class="grande ${r.extras ? 'neg' : ''}">${r.extras}</span><small>carros extras</small></div></div>
+    <div class="horas">${r.horas.map((h) => `<div class="hbar ${h.max > r.cfg.vagas ? 'acima' : ''}" title="${h.rotulo}: ${h.max} simultâneos"><i style="height:${(h.max / maxH) * 100}%"></i><b>${h.max}</b><small>${h.rotulo}</small></div>`).join('')}<em style="bottom:${(r.cfg.vagas / maxH) * 100}%"><span>${r.cfg.vagas} vagas</span></em></div>
+    <table class="tab desp"><tbody>
+      <tr><td>Valor do dia (até ${r.cfg.vagas} vagas simultâneas)</td><td class="r">${brl(r.valorDia)}</td></tr>
+      <tr><td>Extras: ${r.extras} × ${brl(r.cfg.valorExtra)} <small>${esc(V.REGRAS[r.regra] || r.regra)}</small></td><td class="r">${brl(r.valorExtras)}</td></tr>
+      <tr class="tot"><td>Total a cobrar</td><td class="r">${brl(r.total)}</td></tr>
+    </tbody></table>
+    ${r.semSaida ? `<p class="mini alerta">${r.semSaida} carro(s) sem horário de saída: considerados até ${esc(c.fechamento)}.</p>` : ''}
+    ${mudou ? `<p class="mini alerta">Os valores do convênio mudaram em Ajustes depois deste cálculo. <button class="btn link mini" data-act="convRecalc">Recalcular</button></p>` : ''}
+    <p class="mini">Lançado em Convênios no caixa do dia. Arquivo: ${esc(cv.arquivo || 'texto colado')}${cv.ignorados ? ` · ${cv.ignorados} linha(s) de outras tabelas ignoradas` : ''}.</p>
+    <details><summary class="mini">Ver os ${r.carros} carros</summary><table class="tab"><tbody>${[...cv.carros].sort((a, b) => a.e - b.e).map((x) => `<tr><td>${esc(x.placa)}</td><td>${V.fmtHora(x.e)} → ${x.s == null ? '?' : V.fmtHora(Math.min(x.s, 1439))}</td><td><small>${esc(x.ticket || '')}</small></td></tr>`).join('')}</tbody></table></details>
+    <div class="linha"><label class="btn arquivo">Trocar relatório<input type="file" id="convArq" accept=".xlsx,.xls,.csv,.txt,.htm,.html" hidden></label><button class="btn link perigo" data-act="convRemover">Remover</button></div>
+  </section>`;
+}
+
+// grava o resultado do convênio num dia e lança o total em "Convênios" do caixa
+async function gravarConvenio(iso, carros, extra) {
+  const mk = mkDe(iso), dd = iso.slice(8), M = await mes(mk);
+  const dia = M.dias[dd] = M.dias[dd] || {};
+  const c = cfgConv();
+  const res = V.calcular(carros, c);
+  dia.convSab = { arquivo: extra.arquivo || '', enviado: new Date().toISOString(), ignorados: extra.ignorados || 0, carros, res };
+  if (!C.ehSabado(iso)) dia.feriado = true;
+  dia.det = dia.det || {};
+  const lst = dia.det.conv = (dia.det.conv || []).filter((x) => !x.auto);
+  if (!lst.length && (dia.pg || {}).conv && !dia.convAutoAntes) lst.push({ nome: 'Convênio (lançado à mão)', valor: dia.pg.conv });
+  lst.push({ nome: `${c.nome} (${C.ehSabado(iso) ? 'sábado' : 'feriado'})`, valor: res.total, obs: `${res.carros} carros · pico ${res.pico} · ${res.extras} extras`, auto: true });
+  dia.convAutoAntes = true;
+  recalcDet(dia, 'conv');
+  salvarMes(mk);
+  return res;
+}
+
+async function processarConvenio(linhas, arquivo) {
+  const { carros, ignorados } = V.extrairCarros(linhas, cfgConv().filtro);
+  if (!carros.length) { toast(`Nenhum carro com "${cfgConv().filtro}" na tabela de preço.`, true); return; }
+  const porData = {};
+  for (const x of carros) (porData[x.data] = porData[x.data] || []).push(x);
+  const datas = Object.keys(porData).sort();
+  const atual = S.ctxDia.iso;
+  if (datas.length === 1 && datas[0] !== atual && !confirm(`O relatório é do dia ${dataBR(datas[0])}. Lançar nesse dia?`)) return;
+  if (datas.length > 1 && !confirm(`O relatório tem ${datas.length} dias (${datas.map((d) => dataBR(d).slice(0, 5)).join(', ')}). Lançar cada um no seu dia?`)) return;
+  let tot = 0;
+  for (const d of datas) tot += (await gravarConvenio(d, porData[d].map(({ data, ...r }) => r), { arquivo, ignorados: datas.length === 1 ? ignorados.outros : 0 })).total;
+  toast(datas.length > 1 ? `${datas.length} dias lançados · ${brl(tot)}` : `Convênio calculado: ${brl(tot)}`);
+  if (datas.length === 1 && datas[0] !== atual) location.hash = '#/hoje/' + datas[0]; else telaDia(atual);
 }
 
 // ---------- frota Sulgás ----------
@@ -359,6 +423,17 @@ async function telaMes(mk) {
       ${pags.length ? `<table class="tab"><tbody>${pags.sort((a, b) => a.nome.localeCompare(b.nome) || a.iso.localeCompare(b.iso)).map((m) => `<tr data-href="#/hoje/${m.iso}"><td>${esc(m.nome)}${m.obs ? `<small>${esc(m.obs)}</small>` : ''}</td><td>${dataBR(m.iso).slice(0, 5)}</td><td class="r">${brl(m.valor)}</td></tr>`).join('')}</tbody></table>` : ''}
       ${semDet > 0.009 ? `<p class="mini">${brl(semDet)} lançados sem nome (dias importados ou sem detalhe).</p>` : ''}</section>`;
   }).join('')}
+
+  ${(() => {
+    const dias = ap.lista.filter((l) => l.dia && l.dia.convSab);
+    if (!dias.length) return '';
+    const tot = dias.reduce((a, l) => a + l.dia.convSab.res.total, 0);
+    return `<section class="card"><h3>Convênio ${esc(cfgConv().nome)} <small>${brl(tot)} a faturar</small></h3>
+      <table class="tab"><thead><tr><th>Dia</th><th>Carros</th><th>Pico</th><th>Extras</th><th>Total</th></tr></thead><tbody>
+      ${dias.map((l) => { const r = l.dia.convSab.res; return `<tr data-href="#/hoje/${l.iso}"><td>${C.pad(l.d)} <small>${C.ehSabado(l.iso) ? 'sáb' : 'feriado'}</small></td><td>${r.carros}</td><td>${r.pico}</td><td class="${r.extras ? 'neg' : ''}">${r.extras}</td><td>${brl(r.total)}</td></tr>`; }).join('')}
+      </tbody></table>
+      <button class="btn link" data-act="convCopiar">Copiar resumo para enviar</button></section>`;
+  })()}
 
   <section class="card">
     <h3>Dias</h3>
@@ -813,6 +888,19 @@ async function telaAjustes() {
     <button class="btn grande">Salvar regras</button>
   </form>
 
+  <section class="card"><h3>Convênio de sábados e feriados</h3>
+    ${(() => { const c = cfgConv(); return `<div class="grade2">
+      <label>Nome do convênio<input data-conv="nome" value="${esc(c.nome)}"></label>
+      <label>Texto na "Tabela de Preço"<input data-conv="filtro" value="${esc(c.filtro)}"></label>
+      <label>Valor por dia (R$)<input data-conv="valorDia" inputmode="decimal" value="${fmtN(c.valorDia)}"></label>
+      <label>Vagas simultâneas incluídas<input data-conv="vagas" inputmode="numeric" value="${c.vagas}"></label>
+      <label>Valor por carro extra (R$)<input data-conv="valorExtra" inputmode="decimal" value="${fmtN(c.valorExtra)}"></label>
+      <label>Carro sem saída conta até<input type="time" data-conv="fechamento" value="${esc(c.fechamento)}"></label>
+    </div>
+    <label>Como contar os carros extras<select data-conv="regra">${Object.entries(V.REGRAS).map(([k, n]) => `<option value="${k}" ${c.regra === k ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
+    <p class="mini">Dias já calculados mantêm os valores da época. Num dia, use "Recalcular" para aplicar os novos.</p>`; })()}
+  </section>
+
   <section class="card"><h3>Campos do caixa do dia</h3>
     <p class="mini">Renomeie, inclua ou tire campos. "Por nome" abre a lista de quem pagou (ex.: mensalistas, convênios). Campos tirados somem do caixa, mas os valores antigos continuam no histórico.</p>
     ${c.pagamentos.filter((x) => x.ativo !== false).map((x, i) => `<div class="linha campo-cx"><input data-campo-cx="${x.k}" data-k="nome" value="${esc(x.nome)}"><label class="chk mini"><input type="checkbox" data-campo-cx="${x.k}" data-k="detalhar" ${x.detalhar ? 'checked' : ''}> por nome</label>${i ? `<button class="x" data-act="subirCampo" data-k="${x.k}" title="subir">↑</button>` : ''}<button class="x" data-act="offCampo" data-k="${x.k}" title="tirar do caixa">✕</button></div>`).join('')}
@@ -920,7 +1008,7 @@ $app.addEventListener('click', async (ev) => {
   const tr = ev.target.closest('tr[data-href]'); if (tr && !ev.target.closest('button,input')) { location.hash = tr.dataset.href; return; }
   const el = ev.target.closest('[data-act]'); if (!el) return;
   const act = el.dataset.act;
-  if (act === 'irData') return;
+  if (act === 'irData' || act === 'feriado') return;
   const ctx = S.ctxDia;
   switch (act) {
     case 'tipo': S.tipoSel = el.dataset.t; telaDia(ctx.iso); break;
@@ -991,6 +1079,15 @@ $app.addEventListener('click', async (ev) => {
     case 'excluirFunc': { const f = S.funcs.find((x) => x.id === el.dataset.id); if (!confirm(`Excluir ${f.nome} do cadastro? O histórico de folhas e presenças continua guardado.`)) break; await S.store.del('funcionarios', f.id); S.funcs = S.funcs.filter((x) => x !== f); telaEquipe(S.ctxEquipe); break; }
     case 'delFolha': { const M = S.meses[S.ctxEquipe]; M.folha[el.dataset.id][el.dataset.k].splice(+el.dataset.i, 1); salvarMes(S.ctxEquipe); telaEquipe(S.ctxEquipe); break; }
     case 'imprimir': window.print(); break;
+    case 'convColar': { const t = document.getElementById('convTxt').value; if (!t.trim()) { toast('Cole o texto do relatório', true); break; } try { await processarConvenio(V.lerColado(t), ''); } catch (e) { toast(e.message, true); } break; }
+    case 'convRecalc': { const d = diaAtual(); await gravarConvenio(ctx.iso, d.convSab.carros, { arquivo: d.convSab.arquivo, ignorados: d.convSab.ignorados }); telaDia(ctx.iso); break; }
+    case 'convRemover': { if (!confirm('Remover o cálculo do convênio deste dia? O valor sai de Convênios no caixa.')) break; const d = diaAtual(); delete d.convSab; if (d.det && d.det.conv) { d.det.conv = d.det.conv.filter((x) => !x.auto); recalcDet(d, 'conv'); } salvarMes(ctx.mk); telaDia(ctx.iso); break; }
+    case 'convCopiar': {
+      const mk = S.ctxMes, c = cfgConv(), dias = Object.entries(S.meses[mk].dias).filter(([, d]) => d.convSab).sort();
+      const txt = `Convênio ${c.nome} · ${nomeMes(mk)}\n` + dias.map(([dd, d]) => `${dd}/${mk.slice(5)}: ${d.convSab.res.carros} carros, pico ${d.convSab.res.pico}, ${d.convSab.res.extras} extras = ${brl(d.convSab.res.total)}`).join('\n') + `\nTotal: ${brl(dias.reduce((a, [, d]) => a + d.convSab.res.total, 0))}`;
+      try { await navigator.clipboard.writeText(txt); toast('Resumo copiado'); } catch { prompt('Copie:', txt); }
+      break;
+    }
     case 'anTipo': { const t = el.dataset.t, c = S.ctxAn; location.hash = t === 'per' ? `#/analise/per/${c.ini}~${c.fim}` : `#/analise/${t}/${c.ini}`; break; }
     case 'anAplicar': { const i = document.getElementById('anIni').value, f = document.getElementById('anFim').value; if (i && f) location.hash = `#/analise/per/${i <= f ? i + '~' + f : f + '~' + i}`; break; }
     case 'toggleContador': S.contadorAberto = !S.contadorAberto; telaMes(S.ctxMes); break;
@@ -1081,6 +1178,9 @@ $app.addEventListener('change', async (ev) => {
   const el = ev.target;
   if (['detNome', 'detValor', 'detObs', 'placaSul', 'motSul', 'modSul'].includes(el.id)) return;
   if (el.dataset.act === 'irData' && el.value) { location.hash = '#/hoje/' + el.value; return; }
+  if (el.dataset.act === 'feriado') { const d = diaAtual(); if (el.checked) d.feriado = true; else delete d.feriado; salvarMes(S.ctxDia.mk); telaDia(S.ctxDia.iso); return; }
+  if (el.id === 'convArq' && el.files[0]) { const f = el.files[0]; try { await processarConvenio(await V.lerArquivo(f.name, await f.arrayBuffer()), f.name); } catch (e) { toast(e.message, true); } return; }
+  if (el.dataset.conv) { const c = S.cfg.convSab = { ...cfgConv(), ...(S.cfg.convSab || {}) }; const k = el.dataset.conv; c[k] = ['valorDia', 'vagas', 'valorExtra'].includes(k) ? num(el.value) : el.value; await salvarCfg(); status('Salvo ✓'); return; }
   if (el.dataset.pg && S.ctxDia) {
     const d = diaAtual(); d.pg = d.pg || {}; const v = num(el.value);
     if (v) d.pg[el.dataset.pg] = v; else delete d.pg[el.dataset.pg];

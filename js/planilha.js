@@ -19,7 +19,7 @@ export function montarPlanilha({ cfg, funcs, frota, meses }) {
   const campos = [...cfg.pagamentos];
   for (const mk of mks) for (const d of Object.values(meses[mk].dias || {})) for (const k of Object.keys(d.pg || {})) if (!campos.some((c) => c.k === k)) campos.push({ k, nome: k });
 
-  const resumo = [], caixa = [], lavagens = [], porNome = [], despesas = [], itens = [], folha = [], sulgas = [];
+  const conv = [], resumo = [], caixa = [], lavagens = [], porNome = [], despesas = [], itens = [], folha = [], sulgas = [];
   for (const mk of mks) {
     const M = meses[mk];
     const ap = C.apuraMes(mk, M, cfg, funcs);
@@ -36,6 +36,7 @@ export function montarPlanilha({ cfg, funcs, frota, meses }) {
       const presentes = Object.entries(pres).filter(([, s]) => s === 'T').map(([id]) => nomeFunc(id)).join(', ');
       const faltas = Object.entries(pres).filter(([, s]) => s === 'F' || s === 'J').map(([id, s]) => `${nomeFunc(id)} (${s})`).join(', ');
       caixa.push([l.iso, SEM[C.diaSemana(l.iso)], ...campos.map((c) => (d.pg || {})[c.k] || null), l.receita, l.pagas, l.cort, l.sulgas, l.retornos, l.valorPagas, l.base, l.regra === 'nova' ? l.faixa.pct : null, l.porPessoa || null, presentes, faltas, d.obs || '']);
+      if (d.convSab) { const r = d.convSab.res; conv.push([l.iso, C.ehSabado(l.iso) ? 'sábado' : 'feriado', r.carros, r.pico, r.momentoPico || '', r.extras, r.cfg.vagas, r.valorDia, r.valorExtras, r.total]); }
       (d.lav || []).forEach((x, i) => lavagens.push([l.iso, i + 1, C.TIPOS[x.t] ? C.TIPOS[x.t].nome : x.t, x.v || 0, x.placa || '', x.mot || (x.placa ? motorista(x.placa) : ''), x.desc || '']));
       for (const [k, lst] of Object.entries(d.det || {})) for (const p of lst) porNome.push([l.iso, (campos.find((c) => c.k === k) || {}).nome || k, p.nome, p.valor, p.obs || '']);
       if (!Array.isArray(d.lav) && d.sulgas && !(M.sulgasLista || []).some((s) => s.data === l.iso)) for (let i = 0; i < d.sulgas; i++) sulgas.push([l.iso, '', '', cfg.sulgasValor || 0, 'planilha (sem placa)']);
@@ -72,6 +73,7 @@ export function montarPlanilha({ cfg, funcs, frota, meses }) {
     { nome: 'Folha', colunas: [T('Mês', 'texto', 9), T('Funcionário', 'texto', 14), T('Dias trab.', 'num', 8), T('Salário', 'moeda'), T('Prêmio diário', 'moeda'), T('Bônus mensal', 'moeda'), T('Extras', 'moeda'), T('Descontos', 'moeda'), T('Total a pagar', 'moeda'), T('Dias VT', 'num', 7), T('VT', 'moeda'), T('Origem', 'texto', 9), T('Obs.', 'texto', 40)], linhas: folha },
     { nome: 'Funcionários', colunas: [T('Nome', 'texto', 14), T('Função', 'texto', 10), T('Ativo', 'texto', 6), T('Salário', 'moeda'), T('VT/dia', 'moeda', 9), T('Dias VT', 'num', 8), T('Admissão', 'data', 11), T('Desligamento', 'data', 12), T('Telefone', 'texto', 15), T('PIX', 'texto', 20), T('Lançamentos fixos', 'texto', 50)],
       linhas: funcs.map((f) => [f.nome, f.funcao || '', f.ativo === false ? 'não' : 'sim', f.salario || 0, f.vtDia || 0, f.vtDiasPadrao || null, f.admissao || null, f.desligamento || null, f.telefone || '', f.pix || '', (f.fixos || []).map((x) => `${x.sinal === '-' ? '−' : '+'} ${x.desc} ${x.tipo === 'pct' ? x.valor + '%' : 'R$ ' + x.valor}`).join('; ')]) },
+    { nome: 'Convênio sábados', colunas: [T('Data', 'data', 11), T('Dia', 'texto', 9), T('Carros', 'num', 8), T('Pico simultâneo', 'num', 10), T('Hora do pico', 'texto', 9), T('Extras', 'num', 7), T('Vagas incluídas', 'num', 9), T('Valor do dia', 'moeda'), T('Valor extras', 'moeda'), T('Total', 'moeda')], linhas: conv },
     { nome: 'Sulgás', colunas: [T('Data', 'data', 11), T('Placa', 'texto', 10), T('Motorista', 'texto', 22), T('Valor', 'moeda'), T('Origem', 'texto', 18)], linhas: sulgas },
     { nome: 'Frota Sulgás', colunas: [T('Placa', 'texto', 10), T('Modelo', 'texto', 14), T('Cor', 'texto', 10), T('Motorista', 'texto', 24)], linhas: frota.map((v) => [v.placa, v.modelo || '', v.cor || '', v.nome || '']) },
     { nome: 'Fornecedores', colunas: [T('Nome', 'texto', 30), T('Contato / obs.', 'texto', 40)], linhas: (cfg.fornecedores || []).map((f) => [f.nome, f.obs || '']) },
