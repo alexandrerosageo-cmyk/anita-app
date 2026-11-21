@@ -939,7 +939,7 @@ async function telaAjustes() {
   <section class="card"><h3>Dados</h3>
     <label class="btn arquivo">Importar histórico (.json)<input type="file" accept=".json,application/json" id="fImport" hidden></label>
     <button class="btn" data-act="exportar">Baixar backup (.json)</button>
-    <p class="mini">Versão ${VERSAO}</p>
+    <p class="mini">Versão ${VERSAO} · <a href="./atualizar.html">forçar atualização</a></p>
   </section>`;
   $app.innerHTML = moldura(corpo, 'Ajustes');
 

@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Atualizando o app…</title>
+<style>body{font-family:system-ui,sans-serif;background:#0a2540;color:#fff;display:grid;place-items:center;min-height:100vh;margin:0;text-align:center}p{opacity:.8}</style>
+</head>
+<body>
+<div><h2>Atualizando o app…</h2><p id="msg">Limpando a versão antiga guardada neste aparelho.</p></div>
+<script>
+(async () => {
+  const msg = document.getElementById('msg');
+  try {
+    if ('serviceWorker' in navigator) for (const r of await navigator.serviceWorker.getRegistrations()) await r.unregister();
+    if (window.caches) for (const k of await caches.keys()) await caches.delete(k);
+    // baixa de novo os arquivos do app, ignorando o cache do navegador
+    const arquivos = ['./', './index.html', './styles.css', './js/app.js', './js/calc.js', './js/store.js', './js/planilha.js', './js/xlsx-mini.js', './js/firebase-config.js', './js/analise.js', './js/convenio.js', './manifest.webmanifest'];
+    await Promise.all(arquivos.map((a) => fetch(a, { cache: 'reload' }).catch(() => {})));
+    msg.textContent = 'Pronto! Abrindo o app…';
+  } catch (e) { msg.textContent = 'Abrindo o app…'; }
+  setTimeout(() => location.replace('./?v=' + Date.now() + '#/hoje'), 600);
+})();
+</script>
+</body>
+</html>
