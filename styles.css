@@ -216,3 +216,10 @@ body:has(.salvarbar) .toast { bottom: calc(135px + env(safe-area-inset-bottom));
 .planilha .grade2 { margin-top: .6rem; }
 .composicao { display: flex; flex-wrap: wrap; gap: .3rem; margin-top: .35rem; }
 .composicao span { background: var(--agua); border-radius: 20px; padding: .1rem .5rem; font-size: .78rem; }
+
+/* grupos de veículo nos botões de preço (lavagem paga) */
+.preco.t-paga.g-normal { background: #dcebfa; color: #0a2540; }
+.preco.t-paga.g-suv { background: #7fb1e6; color: #0a2540; }
+.preco.t-paga.g-pick { background: #1f5f9e; color: #fff; }
+.preco.t-paga.g-pick small { color: #d6e6f7; }
+.preco.t-paga.g-normal:active { background: #c2dbf4; } .preco.t-paga.g-suv:active { background: #6aa1db; } .preco.t-paga.g-pick:active { background: #174a7c; }
