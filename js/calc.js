@@ -91,10 +91,22 @@ export function ativoEm(f, iso) {
 }
 
 // Prêmio do dia por participante presente
+// Regra antiga (planilha): valor das pagas × (7% até 7 pagas; acima disso, % = nº de pagas) + Sulgás × R$ 48 × 5%
+export const ANTIGA_PADRAO = { pctMin: 7, limite: 7, sulgasBase: 48, sulgasPct: 5 };
+export function premioAntigo(a, cfg) {
+  const r = { ...ANTIGA_PADRAO, ...((cfg && cfg.regraAntiga) || {}) };
+  const pct = a.pagas <= r.limite ? r.pctMin : a.pagas;
+  const lav = r2(a.valorPagas * pct / 100), sul = r2(a.sulgas * r.sulgasBase * r.sulgasPct / 100);
+  return { pct, lav, sul, total: r2(lav + sul) };
+}
+
 export function premioDia(dia, iso, cfg) {
   const a = apuraDia(dia, cfg);
   if (!regraNova(iso, cfg)) {
-    return { ...a, regra: 'antiga', faixa: { nome: 'Regra antiga', pct: null, nivel: -1 }, porPessoa: r2(dia && dia.premioLeg) };
+    if (dia && dia.premioLeg != null) return { ...a, regra: 'antiga', faixa: { nome: 'Regra antiga (planilha)', pct: null, nivel: -1 }, porPessoa: r2(dia.premioLeg) };
+    if (!dia || dia.legado) return { ...a, regra: 'antiga', faixa: { nome: 'Regra antiga', pct: null, nivel: -1 }, porPessoa: 0 };
+    const pa = premioAntigo(a, cfg);
+    return { ...a, regra: 'antiga', antiga: pa, faixa: { nome: `Regra antiga · ${pa.pct}%`, pct: pa.pct, nivel: -1 }, porPessoa: pa.total };
   }
   const faixa = faixaDia(a.contados, iso, cfg);
   return { ...a, regra: 'nova', faixa, porPessoa: r2(a.base * faixa.pct / 100) };

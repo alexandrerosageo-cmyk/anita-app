@@ -5,7 +5,7 @@ import * as V from './convenio.js';
 import { EMAIL_BACKUP } from './firebase-config.js';
 import { criarStore, salvarConfigFirebase, interpretarConfig, lerConfigFirebase, usarFirebasePadrao } from './store.js';
 
-const VERSAO = '2.1.0';
+const VERSAO = '2.2.1';
 const $app = document.getElementById('app');
 const S = { store: null, cfg: null, funcs: [], frota: [], meses: {}, tipoSel: 'paga', salvando: 0 };
 
@@ -55,14 +55,40 @@ async function mes(mk) {
   return S.meses[mk];
 }
 const timers = {};
+S.pendente = {}; S.salvoEm = {}; S.erroSalvar = {};
+const horaAgora = () => { const d = new Date(); return `${C.pad(d.getHours())}:${C.pad(d.getMinutes())}`; };
+function msgErroSalvar(e) { return ehPermissao(e) ? `Sem permissão para gravar (${(S.store.usuario() || {}).email || 'sem login'}). Saia e entre de novo.` : 'Não consegui salvar: ' + e.message; }
 function salvarMes(mk) {
-  status('Salvando…');
+  S.pendente[mk] = true; delete S.erroSalvar[mk];
+  status('Alterações não salvas'); atualizarBarraSalvar();
   clearTimeout(timers[mk]);
-  timers[mk] = setTimeout(async () => {
-    try { await S.store.set('meses', mk, S.meses[mk]); status('Salvo ✓'); }
-    catch (e) { status('Erro ao salvar'); toast(ehPermissao(e) ? `Sem permissão para gravar (${(S.store.usuario() || {}).email || 'sem login'}). Veja as regras do Firestore.` : 'Não consegui salvar: ' + e.message, true); }
-  }, 600);
+  timers[mk] = setTimeout(() => gravarMes(mk).catch(() => {}), 1500); // proteção: grava sozinho se você esquecer
 }
+async function gravarMes(mk) {
+  clearTimeout(timers[mk]);
+  try {
+    await S.store.set('meses', mk, S.meses[mk]);
+    S.pendente[mk] = false; S.salvoEm[mk] = horaAgora(); delete S.erroSalvar[mk];
+    status('Salvo ✓'); atualizarBarraSalvar();
+  } catch (e) {
+    S.erroSalvar[mk] = msgErroSalvar(e); status('Erro ao salvar'); atualizarBarraSalvar(); toast(S.erroSalvar[mk], true);
+    throw e;
+  }
+}
+function barraSalvar(mk) {
+  const erro = S.erroSalvar[mk], pend = S.pendente[mk];
+  return `<div class="salvarbar ${erro ? 'erro' : pend ? 'pend' : 'ok'}" id="salvarbar">
+    <span>${erro ? '⚠️ ' + esc(erro) : pend ? 'Alterações não salvas' : S.salvoEm[mk] ? `Salvo às ${S.salvoEm[mk]} ✓` : 'Tudo salvo ✓'}</span>
+    <button class="btn" data-act="salvarDia">💾 Salvar dia</button></div>`;
+}
+function atualizarBarraSalvar() {
+  const el = document.getElementById('salvarbar'); if (!el || !S.ctxDia) return;
+  const tmp = document.createElement('div'); tmp.innerHTML = barraSalvar(S.ctxDia.mk);
+  const novo = tmp.firstElementChild;
+  el.className = novo.className;                         // só texto e cor: o botão continua o mesmo elemento
+  el.querySelector('span').innerHTML = novo.querySelector('span').innerHTML;
+}
+window.addEventListener('beforeunload', (ev) => { if (Object.values(S.pendente).some(Boolean)) { ev.preventDefault(); ev.returnValue = ''; } });
 async function salvarCfg() { await S.store.set('config', 'app', S.cfg); }
 async function salvarFunc(f) { await S.store.set('funcionarios', f.id, f); }
 async function salvarFrota() { await S.store.set('frota', 'lista', { veiculos: S.frota }); }
@@ -160,7 +186,7 @@ function moldura(corpo, titulo) {
 
 // ---------- TELA: dia ----------
 async function telaDia(iso) {
-  if (S.ctxDia && S.ctxDia.iso !== iso) S.detAberto = null;
+  if (S.ctxDia && S.ctxDia.iso !== iso) { S.detAberto = null; if (S.pendente[S.ctxDia.mk]) gravarMes(S.ctxDia.mk).catch(() => {}); }
   const mk = mkDe(iso), dd = iso.slice(8);
   const M = await mes(mk);
   const dia = M.dias[dd] || {};
@@ -187,11 +213,12 @@ async function telaDia(iso) {
   <section class="card destaque nivel${p.faixa.nivel}">
     <div class="placar">
       <div><span class="grande">${p.contados}</span><small>veículos contados</small></div>
-      <div><span class="grande">${brl(p.porPessoa)}</span><small>prêmio por pessoa${nova ? '' : ' (regra antiga)'}</small></div>
+      <div><span class="grande">${brl(p.porPessoa)}</span><small>prêmio por pessoa${nova ? '' : ' · regra antiga'}</small></div>
     </div>
     ${nova ? `<div class="barra"><i style="width:${prog}%"></i><em style="left:${(3 / metaDia) * 100}%"></em><em style="left:${(8 / metaDia) * 100}%"></em></div>
     <p class="faixa"><b>${esc(p.faixa.nome)}</b>${p.faixa.pct ? ` · ${pct(p.faixa.pct)} de ${brl(p.base)}` : ''}${prox ? ` · faltam <b>${prox.faltam}</b> para ${pct(prox.pct)}` : (p.faixa.nivel >= 3 ? ' · meta da equipe batida! 🎉' : '')}</p>`
-    : `<p class="faixa">Dia anterior à vigência do regulamento novo (${dataBR(S.cfg.vigencia)}). Pela regra nova seria ${brl(C.premioDiaNova(dia, iso, S.cfg))}.</p>`}
+    : `<p class="faixa">${p.antiga ? `<b>Regra antiga</b> · ${pct(p.antiga.pct)} de ${brl(p.valorPagas)} = ${brl(p.antiga.lav)}${p.antiga.sul ? ` + Sulgás ${brl(p.antiga.sul)}` : ''}${p.pagas <= ((S.cfg.regraAntiga || {}).limite || 7) ? ` · com ${((S.cfg.regraAntiga || {}).limite || 7) + 1} pagas sobe para ${((S.cfg.regraAntiga || {}).limite || 7) + 1}%` : ''}` : 'Regra antiga (valor importado da planilha)'}</p>
+       <p class="mini">Regulamento novo a partir de ${dataBR(S.cfg.vigencia)}. Pela regra nova seria ${brl(C.premioDiaNova(dia, iso, S.cfg))}.</p>`}
     <p class="mini">Pagas ${p.pagas} · Cortesias ${p.cort} · Sulgás ${p.sulgas}${p.retornos ? ` · Retornos ${p.retornos} (não contam)` : ''} · Lavagens pagas ${brl(p.valorPagas)}</p>
   </section>
 
@@ -239,7 +266,7 @@ async function telaDia(iso) {
     <h3>Observações</h3>
     <textarea data-campo="obs" rows="2" placeholder="Mensalista novo, ocorrência, etc.">${esc(dia.obs || '')}</textarea>
   </section>`;
-  $app.innerHTML = moldura(corpo, 'Lançamento do dia');
+  $app.innerHTML = moldura(corpo + barraSalvar(mk), 'Lançamento do dia');
   S.ctxDia = { iso, mk, dd };
 }
 
@@ -888,6 +915,9 @@ async function telaAjustes() {
     <h4>Bônus mensal (valor fixo por pessoa)</h4>
     ${c.faixasMes.map((f, i) => `<div class="linha"><label class="inl">a partir de<input name="fmMin${i}" inputmode="numeric" value="${f.min}"></label><label class="inl">carros R$<input name="fmVal${i}" inputmode="decimal" value="${fmtN(f.valor)}"></label></div>`).join('')}
     <label>Presença mínima para o bônus (%)<input name="presencaMin" inputmode="numeric" value="${c.presencaMin}"></label>
+    <h4>Regra antiga (até a vigência)</h4>
+    ${(() => { const ra = { ...C.ANTIGA_PADRAO, ...(c.regraAntiga || {}) }; return `<div class="linha"><label class="inl"><input name="raPct" inputmode="decimal" value="${fmtN(ra.pctMin)}">% até</label><label class="inl"><input name="raLim" inputmode="numeric" value="${ra.limite}"> pagas; acima, % = nº de pagas</label></div>
+    <div class="linha"><label class="inl">Sulgás: R$<input name="raSulBase" inputmode="decimal" value="${fmtN(ra.sulgasBase)}"></label><label class="inl">×<input name="raSulPct" inputmode="decimal" value="${fmtN(ra.sulgasPct)}">%</label></div>`; })()}
     <h4>Outros</h4>
     <div class="grade2">
       <label>Valor por lavagem Sulgás<input name="sulgasValor" inputmode="decimal" value="${fmtN(c.sulgasValor)}"></label>
@@ -950,6 +980,7 @@ async function telaAjustes() {
     c.sabadoMin = num(fd.get('sabMin')); c.sabadoPct = num(fd.get('sabPct'));
     c.faixasMes = c.faixasMes.map((f, i) => ({ min: num(fd.get('fmMin' + i)), valor: num(fd.get('fmVal' + i)) }));
     for (const k of ['presencaMin', 'sulgasValor', 'impostoPct', 'metaDia']) c[k] = num(fd.get(k));
+    c.regraAntiga = { pctMin: num(fd.get('raPct')), limite: num(fd.get('raLim')), sulgasBase: num(fd.get('raSulBase')), sulgasPct: num(fd.get('raSulPct')) };
     await salvarCfg(); toast('Regras salvas');
   };
   document.getElementById('fImport').onchange = (ev) => importar(ev.target.files[0]);
@@ -1094,6 +1125,20 @@ $app.addEventListener('click', async (ev) => {
     case 'excluirFunc': { const f = S.funcs.find((x) => x.id === el.dataset.id); if (!confirm(`Excluir ${f.nome} do cadastro? O histórico de folhas e presenças continua guardado.`)) break; await S.store.del('funcionarios', f.id); S.funcs = S.funcs.filter((x) => x !== f); telaEquipe(S.ctxEquipe); break; }
     case 'delFolha': { const M = S.meses[S.ctxEquipe]; M.folha[el.dataset.id][el.dataset.k].splice(+el.dataset.i, 1); salvarMes(S.ctxEquipe); telaEquipe(S.ctxEquipe); break; }
     case 'imprimir': window.print(); break;
+    case 'salvarDia': {
+      const mk = ctx.mk, b = el; b.disabled = true; b.textContent = 'Salvando…';
+      // campos com texto ainda não confirmado (ex.: observação sendo digitada)
+      const obs = document.querySelector('textarea[data-campo=obs]'); if (obs) { const d = diaAtual(); if ((d.obs || '') !== obs.value) { d.obs = obs.value; S.pendente[mk] = true; } }
+      try {
+        await gravarMes(mk);
+        const doServidor = await S.store.get('meses', mk); // confere o que ficou gravado
+        if (doServidor) { S.meses[mk] = doServidor; if (!S.meses[mk].dias) S.meses[mk].dias = {}; }
+        toast(`Dia ${dataBR(ctx.iso).slice(0, 5)} salvo ✓`);
+        if (navigator.vibrate) navigator.vibrate(30);
+        telaDia(ctx.iso);
+      } catch (e) { b.disabled = false; b.textContent = '💾 Salvar dia'; }
+      break;
+    }
     case 'convColar': { const t = document.getElementById('convTxt').value; if (!t.trim()) { toast('Cole o texto do relatório', true); break; } try { await processarConvenio(V.lerColado(t), ''); } catch (e) { toast(e.message, true); } break; }
     case 'convRecalc': { const d = diaAtual(); await gravarConvenio(ctx.iso, d.convSab.carros, { arquivo: d.convSab.arquivo, ignorados: d.convSab.ignorados }); telaDia(ctx.iso); break; }
     case 'convRemover': { if (!confirm('Remover o cálculo do convênio deste dia? O valor sai de Convênios no caixa.')) break; const d = diaAtual(); delete d.convSab; if (d.det && d.det.conv) { d.det.conv = d.det.conv.filter((x) => !x.auto); recalcDet(d, 'conv'); } salvarMes(ctx.mk); telaDia(ctx.iso); break; }
