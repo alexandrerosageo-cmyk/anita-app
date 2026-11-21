@@ -5,7 +5,7 @@ import * as V from './convenio.js';
 import { EMAIL_BACKUP } from './firebase-config.js';
 import { criarStore, salvarConfigFirebase, interpretarConfig, lerConfigFirebase, usarFirebasePadrao } from './store.js';
 
-const VERSAO = '2.4.0';
+const VERSAO = '2.4.1';
 const $app = document.getElementById('app');
 const S = { store: null, cfg: null, funcs: [], frota: [], meses: {}, tipoSel: 'paga', salvando: 0 };
 
@@ -193,7 +193,8 @@ async function telaDia(iso) {
   const nova = C.regraNova(iso, S.cfg);
   const p = C.premioDia(dia, iso, S.cfg);
   const prox = nova ? C.proximaFaixa(p.contados, iso, S.cfg) : null;
-  const legadoAgregado = !Array.isArray(dia.lav) && (dia.legado || dia.pagas || dia.valor);
+  // formulário de totais só para dias da planilha que já têm lavagens contadas; o resto lança carro a carro
+  const legadoAgregado = !Array.isArray(dia.lav) && !!(dia.pagas || dia.valor || dia.cort || dia.sulgas);
   const pres = C.presencaDia(M.dias[dd] || (C.ehSabado(iso) ? null : {}), iso, S.funcs, (M.folhaLegado || []).map((e) => e.id));
   const funcs = funcsAtivos(iso);
   for (const id of Object.keys(pres)) if (!funcs.find((f) => f.id === id)) { const f = S.funcs.find((x) => x.id === id); if (f) funcs.push(f); }
@@ -410,7 +411,12 @@ function fixarPresenca(dia) {
   if (!dia.presenca || !Object.keys(dia.presenca).length) dia.presenca = { ...C.presencaDia(C.ehSabado(S.ctxDia.iso) ? dia : (dia || {}), S.ctxDia.iso, S.funcs, (S.meses[S.ctxDia.mk].folhaLegado || []).map((e) => e.id)) };
 }
 function addLav(item) {
-  const dia = diaAtual(); if (!Array.isArray(dia.lav)) dia.lav = [];
+  const dia = diaAtual();
+  if (!Array.isArray(dia.lav)) {
+    dia.lav = [];
+    // dia veio da planilha sem lavagens: passa a ser um dia do app (prêmio calculado pela regra)
+    if (!(dia.pagas || dia.valor || dia.cort || dia.sulgas)) { delete dia.legado; delete dia.premioLeg; delete dia.pagas; delete dia.valor; delete dia.cort; delete dia.sulgas; }
+  }
   fixarPresenca(dia);
   dia.lav.push(item); salvarMes(S.ctxDia.mk); telaDia(S.ctxDia.iso);
   if (navigator.vibrate) navigator.vibrate(15);
@@ -1153,7 +1159,7 @@ $app.addEventListener('click', async (ev) => {
     }
     case 'delLav': { const d = diaAtual(); d.lav.splice(+el.dataset.i, 1); salvarMes(ctx.mk); telaDia(ctx.iso); break; }
     case 'pres': { const d = diaAtual(); fixarPresenca(d); d.presenca[el.dataset.id] = el.dataset.s; salvarMes(ctx.mk); telaDia(ctx.iso); break; }
-    case 'converterDia': { const d = diaAtual(); if (confirm('Os totais deste dia serão apagados para lançar carro a carro. Continuar?')) { delete d.pagas; delete d.valor; delete d.cort; delete d.sulgas; delete d.legado; d.lav = []; salvarMes(ctx.mk); telaDia(ctx.iso); } break; }
+    case 'converterDia': { const d = diaAtual(); if (confirm('Os totais deste dia serão apagados para lançar carro a carro. Continuar?')) { delete d.pagas; delete d.valor; delete d.cort; delete d.sulgas; delete d.legado; delete d.premioLeg; d.lav = []; salvarMes(ctx.mk); telaDia(ctx.iso); } break; }
     case 'folhaNoApp': {
       const mk = S.ctxEquipe, M = S.meses[mk];
       M.folha = M.folha || {};
