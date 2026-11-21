@@ -5,7 +5,7 @@ import * as V from './convenio.js';
 import { EMAIL_BACKUP } from './firebase-config.js';
 import { criarStore, salvarConfigFirebase, interpretarConfig, lerConfigFirebase, usarFirebasePadrao } from './store.js';
 
-const VERSAO = '2.9.0';
+const VERSAO = '2.10.0';
 const $app = document.getElementById('app');
 const S = { store: null, cfg: null, funcs: [], frota: [], meses: {}, tipoSel: 'paga', salvando: 0 };
 
@@ -581,8 +581,11 @@ async function telaEquipe(mk) {
     const linhas = lista.map((f) => {
       const pf = ap.porFunc[f.id] || { T: 0, F: 0, J: 0, previstos: 0, presencaPct: 0, premioDiario: 0, bonus: 0, premioTotal: 0, elegivelBonus: false, dias: [] };
       const fo = (M.folha || {})[f.id] || {};
-      return { f, pf, fo, r: C.folhaFunc(f, pf, fo, S.cfg) };
+      return { f, pf, fo, r: C.folhaFunc(f, pf, fo, S.cfg, mk) };
     });
+    // VT do mês seguinte (pago junto no dia 1º)
+    const mkProx = somaMes(mk, 1), Mp = await mes(mkProx), diaPg = C.diaPagamento(mk);
+    for (const l of linhas) l.vtProx = C.folhaFunc(l.f, null, (Mp.folha || {})[l.f.id], S.cfg, mkProx);
     const soma = (k) => C.r2(linhas.reduce((a, l) => a + l.r[k], 0));
     const resumo = `<section class="card"><h3>Resumo da folha${daPlanilha ? ' <small>valores vindos da planilha, todos editáveis abaixo</small>' : ''}</h3>
       <div class="rola"><table class="tab resumo-folha"><thead><tr><th>Nome</th><th>Salário</th><th>Prêmio</th><th>Extras</th><th>Desc.</th><th>Total</th><th>VT</th></tr></thead><tbody>
@@ -590,7 +593,16 @@ async function telaEquipe(mk) {
       <tr class="tot"><td>Total</td><td>${brl(soma('salario'))}</td><td>${brl(soma('premio'))}</td><td>${brl(soma('extras'))}</td><td>${soma('descontos') ? '−' + brl(soma('descontos')) : '—'}</td><td>${brl(soma('total'))}</td><td>${brl(soma('vt'))}</td></tr>
       </tbody></table></div>
       <p class="mini">Total a desembolsar: <b>${brl(C.r2(soma('total') + soma('vt')))}</b> (folha + VT).</p></section>`;
-    folha = resumo + linhas.map(({ f, pf, fo, r }) => {
+    const somaP = (fn) => C.r2(linhas.reduce((a, l) => a + fn(l), 0));
+    const pagamento = `<section class="card pagamento"><h3>💵 Pagamento de ${dataBR(diaPg)} <small>${nomeMes(mk).split(' ')[0]} + VT de ${nomeMes(mkProx).split(' ')[0]}</small></h3>
+      <div class="rola"><table class="tab resumo-folha"><thead><tr><th>Nome</th><th>Prêmio</th><th>Extras</th><th>Desc.</th><th>VT ${nomeMes(mkProx).slice(0, 3)}</th><th>Pagar dia 1º</th></tr></thead><tbody>
+      ${linhas.map((l) => `<tr><td><b>${esc(l.f.nome)}</b></td><td>${brl(l.r.premio)}</td><td>${l.r.extras ? brl(l.r.extras) : '—'}</td><td>${l.r.descontos ? '−' + brl(l.r.descontos) : '—'}</td>
+        <td><input class="mini-in" inputmode="numeric" data-folha-prox="${l.f.id}" value="${l.vtProx.vtDias}" title="dias de VT de ${nomeMes(mkProx)}"> × ${brl(l.vtProx.vtDia)}<br><b>${brl(l.vtProx.vt)}</b></td>
+        <td><b>${brl(C.r2(l.r.variavel + l.vtProx.vt))}</b></td></tr>`).join('')}
+      <tr class="tot"><td>Total</td><td>${brl(somaP((l) => l.r.premio))}</td><td>${brl(somaP((l) => l.r.extras))}</td><td>${somaP((l) => l.r.descontos) ? '−' + brl(somaP((l) => l.r.descontos)) : '—'}</td><td>${brl(somaP((l) => l.vtProx.vt))}</td><td>${brl(somaP((l) => l.r.variavel + l.vtProx.vt))}</td></tr>
+      </tbody></table></div>
+      <p class="mini">No dia 1º vão prêmios, extras e descontos de ${nomeMes(mk).split(' ')[0]} e o VT de ${nomeMes(mkProx).split(' ')[0]} (previsto em ${C.diasUteis(mkProx)} dias úteis; ajuste os dias acima). Salários: ${brl(somaP((l) => l.r.salario))}, pagos à parte.</p></section>`;
+    folha = pagamento + resumo + linhas.map(({ f, pf, fo, r }) => {
       const motivo = !ap.regraNova ? 'regra antiga: sem bônus' : !fm ? 'equipe abaixo da meta mensal' : (pf.elegivelBonus ? `meta mensal ${fm.nivel}` : `presença ${Math.round(pf.presencaPct * 100)}% < ${S.cfg.presencaMin}%`);
       const item = (k, e, i, sinal) => `<div class="item-folha"><span>${sinal}</span><input data-fitem="${f.id}" data-k="${k}" data-i="${i}" data-c="desc" value="${esc(e.desc)}" placeholder="Descrição"><input data-fitem="${f.id}" data-k="${k}" data-i="${i}" data-c="valor" inputmode="decimal" value="${fmtN(e.valor)}" class="v"><button class="x" data-act="delFolha" data-id="${f.id}" data-k="${k}" data-i="${i}">✕</button></div>`;
       return `<section class="card func" id="func-${f.id}">
@@ -602,7 +614,7 @@ async function telaEquipe(mk) {
           <div class="calc">= salário <b>${brl(r.salario)}</b></div>
           <label>Prêmio do mês (R$)<input data-folha="${f.id}" data-k="premioManual" inputmode="decimal" value="${fo.premioManual != null ? fmtN(fo.premioManual) : ''}" placeholder="${fmtN(pf.premioTotal) || '0'}"></label>
           <div class="calc span2">${fo.premioManual != null ? `<span class="alerta">${fo.premioOrigem === 'planilha' ? 'valor da planilha' : 'valor digitado'}</span> · calculado pelo app:  ${brl(pf.premioTotal)} <button class="btn link mini" data-act="premioAuto" data-id="${f.id}">usar o calculado</button>` : `calculado: diário ${brl(pf.premioDiario)}${ap.regraNova ? ` + bônus ${brl(pf.bonus)} (${motivo})` : ' (regra antiga)'} <a href="#/demo/${mk}/${f.id}" class="tag">demonstrativo</a>`}</div>
-          <label>VT: dias<input data-folha="${f.id}" data-k="vtDias" inputmode="numeric" value="${r.vtDias}"></label>
+          <label>VT deste mês: dias<input data-folha="${f.id}" data-k="vtDias" inputmode="numeric" value="${r.vtDias}"></label>
           <label>VT: valor por dia (R$)<input data-folha="${f.id}" data-k="vtDia" inputmode="decimal" value="${fmtN(r.vtDia)}"></label>
           <div class="calc">= VT <b>${brl(r.vt)}</b></div>
         </div>
@@ -614,7 +626,7 @@ async function telaEquipe(mk) {
         ${(fo.descontos || []).map((e, i) => item('descontos', e, i, '−')).join('') || '<p class="mini">Nenhum desconto neste mês.</p>'}
         <button class="btn link" data-act="addFolhaItem" data-id="${f.id}" data-k="descontos">+ Desconto</button>
         <div class="total-folha"><span>Total a pagar</span><b>${brl(r.total)}</b></div>
-        <p class="mini">${brl(r.salario)} salário + ${brl(r.premio)} prêmio${r.extras ? ` + ${brl(r.extras)} extras` : ''}${r.descontos ? ` − ${brl(r.descontos)} descontos` : ''} · VT à parte: ${brl(r.vt)}</p>
+        <p class="mini">Salário ${brl(r.salario)} · no dia ${dataBR(diaPg).slice(0, 5)}: prêmio ${brl(r.premio)}${r.extras ? ` + extras ${brl(r.extras)}` : ''}${r.descontos ? ` − descontos ${brl(r.descontos)}` : ''} = <b>${brl(r.variavel)}</b> (+ VT do mês seguinte). VT deste mês (pago em ${dataBR(mk + '-01').slice(0, 5)}): ${brl(r.vt)}.</p>
         <input class="obs" data-folha="${f.id}" data-k="obs" placeholder="Observação (ex.: pago em 05/12)" value="${esc(fo.obs || '')}">
       </section>`;
     }).join('') + ((M.folhaLegado || []).length ? `<section class="card"><details><summary class="mini">Ver a folha original da planilha</summary>
@@ -1357,7 +1369,7 @@ async function redesenhar(fn) {
   await new Promise((r) => setTimeout(r, 0)); // espera o foco ir para o próximo campo
   const a = document.activeElement;
   const sel = a && a !== document.body && a.matches('input,textarea,select')
-    ? (a.dataset.fitem ? `[data-fitem="${a.dataset.fitem}"][data-k="${a.dataset.k}"][data-i="${a.dataset.i}"][data-c="${a.dataset.c}"]`
+    ? (a.dataset.folhaProx ? `[data-folha-prox="${a.dataset.folhaProx}"]` : a.dataset.fitem ? `[data-fitem="${a.dataset.fitem}"][data-k="${a.dataset.k}"][data-i="${a.dataset.i}"][data-c="${a.dataset.c}"]`
       : ['data-pg', 'data-campo', 'data-folha', 'id'].map((k) => a.getAttribute(k) ? `[${k}="${a.getAttribute(k)}"]${k === 'data-folha' ? `[data-k="${a.dataset.k}"]` : ''}` : '').find(Boolean)) : null;
   await fn();
   if (sel) { const n = document.querySelector(sel); if (n) { n.focus(); if (n.select) n.select(); } }
@@ -1401,6 +1413,11 @@ $app.addEventListener('change', async (ev) => {
     d[k] = k === 'obs' ? el.value : (k === 'valor' ? num(el.value) : Math.round(num(el.value)));
     if (k !== 'obs') { delete d.legado; delete d.premioLeg; S.abrirPlanilha = true; if (!d[k]) delete d[k]; }
     salvarMes(S.ctxDia.mk); if (k !== 'obs') redesenhar(() => telaDia(S.ctxDia.iso)); return;
+  }
+  if (el.dataset.folhaProx) {
+    const mkP = somaMes(S.ctxEquipe, 1), Mp = await mes(mkP); Mp.folha = Mp.folha || {};
+    (Mp.folha[el.dataset.folhaProx] = Mp.folha[el.dataset.folhaProx] || {}).vtDias = num(el.value);
+    salvarMes(mkP); redesenhar(() => telaEquipe(S.ctxEquipe)); return;
   }
   if (el.dataset.fitem) {
     const mk = S.ctxEquipe, M = S.meses[mk]; M.folha = M.folha || {};

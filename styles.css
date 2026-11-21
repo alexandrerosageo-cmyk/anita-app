@@ -254,3 +254,5 @@ body:has(.salvarbar) .toast { bottom: calc(135px + env(safe-area-inset-bottom));
 .total-folha b { font-size: 1.25rem; }
 .resumo-folha td, .resumo-folha th { white-space: nowrap; font-size: .82rem; }
 @media (max-width: 480px) { .grade-folha { grid-template-columns: 1fr 1fr; } .grade-folha .calc { grid-column: span 2; padding-bottom: 0; } }
+.pagamento { border: 2px solid var(--ok); }
+.pagamento h3 { color: var(--ok); }

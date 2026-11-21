@@ -182,12 +182,17 @@ export function apuraMes(mk, mes, cfg, funcs) {
 // Folha do mês de um funcionário.
 // f.fixos: lançamentos que se repetem todo mês [{desc, sinal:'+'|'-', tipo:'valor'|'pct', valor}]
 // folha (do mês): ajustes daquele mês (dias, VT, extras, descontos, fixos desligados)
-export function folhaFunc(f, pf, folha, cfg) {
+// dias úteis (segunda a sexta) do mês: previsão de VT quando o mês ainda não foi trabalhado
+export function diasUteis(mk) { let n = 0; for (let d = 1; d <= diasNoMes(mk); d++) { const w = diaSemana(`${mk}-${pad(d)}`); if (w >= 1 && w <= 5) n++; } return n; }
+// data de pagamento de prêmios/extras/descontos do mês mk (e do VT do mês seguinte)
+export function diaPagamento(mk) { let [y, m] = mk.split('-').map(Number); m++; if (m > 12) { m = 1; y++; } return `${y}-${pad(m)}-01`; }
+
+export function folhaFunc(f, pf, folha, cfg, mk) {
   folha = folha || {};
   const diasTrab = folha.diasTrab != null ? Number(folha.diasTrab) : 30 - (pf ? pf.F : 0);
   const salMes = folha.salMes != null ? Number(folha.salMes) : Number(f.salario) || 0;
   const salario = r2(salMes / 30 * diasTrab);
-  const vtDias = folha.vtDias != null ? Number(folha.vtDias) : (f.vtDiasPadrao ? Number(f.vtDiasPadrao) : (pf ? pf.T : 0));
+  const vtDias = folha.vtDias != null ? Number(folha.vtDias) : (f.vtDiasPadrao ? Number(f.vtDiasPadrao) : (mk ? diasUteis(mk) : (pf ? pf.T : 0)));
   const vtDia = folha.vtDia != null ? Number(folha.vtDia) : Number(f.vtDia) || 0;
   const vt = r2(vtDias * vtDia);
   const off = folha.fixosOff || [];
@@ -199,7 +204,9 @@ export function folhaFunc(f, pf, folha, cfg) {
   const extras = r2((folha.extras || []).reduce((a, e) => a + (Number(e.valor) || 0), 0) + fx('+'));
   const descontos = r2((folha.descontos || []).reduce((a, e) => a + (Number(e.valor) || 0), 0) + fx('-'));
   const premio = folha.premioManual != null ? r2(folha.premioManual) : (pf ? pf.premioTotal : 0);
-  return { salMes, diasTrab, salario, vtDias, vtDia, vt, fixos, extras, descontos, premio, total: r2(salario + premio + extras - descontos) };
+  // pago no dia 1º do mês seguinte: prêmio + extras − descontos (o VT pago nesse dia é o do mês seguinte)
+  const variavel = r2(premio + extras - descontos);
+  return { salMes, diasTrab, salario, vtDias, vtDia, vt, fixos, extras, descontos, premio, variavel, total: r2(salario + variavel) };
 }
 
 // Despesas e resultado do mês
@@ -222,7 +229,7 @@ export function resultadoMes(ap, mes, cfg, funcs) {
     for (const f of funcs) {
       const pf = ap.porFunc[f.id];
       if (!pf || (!pf.T && !pf.F && !pf.J && !f.ativo)) continue;
-      const fo = folhaFunc(f, pf, (mes.folha || {})[f.id], cfg);
+      const fo = folhaFunc(f, pf, (mes.folha || {})[f.id], cfg, ap.mk);
       sal += fo.salario; vt += fo.vt; pr += fo.premio; ex += fo.extras - fo.descontos;
     }
     auto.push({ desc: 'Salários', valor: r2(sal), auto: true });
