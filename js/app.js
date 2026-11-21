@@ -5,7 +5,7 @@ import * as V from './convenio.js';
 import { EMAIL_BACKUP } from './firebase-config.js';
 import { criarStore, salvarConfigFirebase, interpretarConfig, lerConfigFirebase, usarFirebasePadrao } from './store.js';
 
-const VERSAO = '2.0.1';
+const VERSAO = '2.0.2';
 const $app = document.getElementById('app');
 const S = { store: null, cfg: null, funcs: [], frota: [], meses: {}, tipoSel: 'paga', salvando: 0 };
 
@@ -102,7 +102,7 @@ async function iniciar() {
   $app.innerHTML = '<div class="carregando">Carregando…</div>';
   try {
     const logado = await S.store.init();
-    if (S.store.modo === 'firebase' && !logado) return telaLogin();
+    if (S.store.modo === 'firebase' && !logado) return telaLogin(S.store.sessaoExpirou ? 'Sua sessão expirou (a senha pode ter sido trocada). Entre de novo.' : '');
   } catch (e) {
     $app.innerHTML = `<div class="card"><h2>Não consegui conectar ao Firebase</h2><p>${esc(e.message)}</p>
       <button class="btn" data-act="desconectar">Voltar ao modo local</button></div>`;

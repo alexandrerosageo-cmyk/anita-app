@@ -46,6 +46,13 @@ class FirebaseStore {
     this.auth = au.getAuth(this.app);
     await au.setPersistence(this.auth, au.browserLocalPersistence);
     this.user = await new Promise((res) => { const off = au.onAuthStateChanged(this.auth, (u) => { off(); res(u); }); });
+    // sessão guardada pode ter sido revogada (ex.: senha trocada): confere com o servidor
+    if (this.user && navigator.onLine !== false) {
+      try { await this.user.getIdToken(true); }
+      catch (e) {
+        if (/user-token-expired|user-disabled|user-not-found|invalid-user-token|requires-recent-login|invalid-credential/.test(e.code || e.message || '')) { await au.signOut(this.auth); this.user = null; this.sessaoExpirou = true; }
+      }
+    }
     return !!this.user;
   }
   async entrar(email, senha) { const c = await this.au.signInWithEmailAndPassword(this.auth, email, senha); this.user = c.user; }
