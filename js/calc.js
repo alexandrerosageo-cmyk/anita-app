@@ -198,7 +198,7 @@ export function folhaFunc(f, pf, folha, cfg) {
   const fx = (sn) => r2(fixos.filter((x) => x.ativo && x.sinal === sn).reduce((a, x) => a + x.valor, 0));
   const extras = r2((folha.extras || []).reduce((a, e) => a + (Number(e.valor) || 0), 0) + fx('+'));
   const descontos = r2((folha.descontos || []).reduce((a, e) => a + (Number(e.valor) || 0), 0) + fx('-'));
-  const premio = pf ? pf.premioTotal : 0;
+  const premio = folha.premioManual != null ? r2(folha.premioManual) : (pf ? pf.premioTotal : 0);
   return { salMes, diasTrab, salario, vtDias, vtDia, vt, fixos, extras, descontos, premio, total: r2(salario + premio + extras - descontos) };
 }
 

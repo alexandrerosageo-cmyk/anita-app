@@ -241,3 +241,16 @@ body:has(.salvarbar) .toast { bottom: calc(135px + env(safe-area-inset-bottom));
 .preco .qtd { position: absolute; top: -7px; right: -5px; min-width: 1.45rem; height: 1.45rem; padding: 0 .3rem; border-radius: 1rem; background: #f2b632; color: #0a2540; font-style: normal; font-weight: 800; font-size: .8rem; display: flex; align-items: center; justify-content: center; box-shadow: 0 1px 3px rgba(0,0,0,.25); border: 2px solid #fff; }
 .preco.t-cortesia .qtd { background: #b99be6; color: #fff; } .preco.t-retorno .qtd { background: var(--erro); color: #fff; }
 .matriz { padding-top: 6px; }
+
+.grade-folha { display: grid; grid-template-columns: 1fr 1fr auto; gap: .5rem .6rem; align-items: end; margin: .5rem 0; }
+.grade-folha .calc { font-size: .82rem; color: var(--suave); padding-bottom: .65rem; white-space: nowrap; }
+.grade-folha .calc.span2 { grid-column: span 2; white-space: normal; }
+.item-folha { display: flex; gap: .35rem; align-items: center; margin-bottom: .35rem; }
+.item-folha > span:first-child { width: 1rem; font-weight: 700; color: var(--suave); }
+.item-folha input { flex: 1; } .item-folha input.v { flex: none; width: 6.5rem; }
+.item-folha .fixo-desc { flex: 1; font-size: .9rem; }
+.item-folha.riscado { opacity: .5; text-decoration: line-through; }
+.total-folha { display: flex; justify-content: space-between; align-items: baseline; border-top: 2px solid var(--texto); margin-top: .6rem; padding-top: .5rem; font-size: 1.05rem; }
+.total-folha b { font-size: 1.25rem; }
+.resumo-folha td, .resumo-folha th { white-space: nowrap; font-size: .82rem; }
+@media (max-width: 480px) { .grade-folha { grid-template-columns: 1fr 1fr; } .grade-folha .calc { grid-column: span 2; padding-bottom: 0; } }

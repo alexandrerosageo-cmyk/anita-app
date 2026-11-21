@@ -5,7 +5,7 @@ import * as V from './convenio.js';
 import { EMAIL_BACKUP } from './firebase-config.js';
 import { criarStore, salvarConfigFirebase, interpretarConfig, lerConfigFirebase, usarFirebasePadrao } from './store.js';
 
-const VERSAO = '2.8.1';
+const VERSAO = '2.9.0';
 const $app = document.getElementById('app');
 const S = { store: null, cfg: null, funcs: [], frota: [], meses: {}, tipoSel: 'paga', salvando: 0 };
 
@@ -571,45 +571,56 @@ async function telaMes(mk) {
 async function telaEquipe(mk) {
   const M = await mes(mk);
   const ap = C.apuraMes(mk, M, S.cfg, S.funcs);
-  const soLeitura = (M.folhaLegado || []).length && !M.folhaApp;
+  // meses da planilha abrem já editáveis: os valores importados viram o ponto de partida
+  const daPlanilha = (M.folhaLegado || []).length && !M.folhaApp;
+  if (daPlanilha) prepararFolhaDaPlanilha(M);
   let folha = '';
-  if (soLeitura) {
-    const t = (k) => M.folhaLegado.reduce((a, e) => a + (e[k] || 0), 0);
-    folha = `<section class="card"><h3>Folha importada da planilha</h3>
-      <table class="tab"><thead><tr><th>Nome</th><th>Salário</th><th>Prêmio</th><th>Desc.</th><th>Total</th></tr></thead><tbody>
-      ${M.folhaLegado.map((e) => `<tr><td>${esc(e.nome)}<small>${e.diasTrab}/${e.diasMes} dias${e.vtDias ? ` · VT ${e.vtDias}×${brl(e.vtDia)}` : ''}${e.obs ? ' · ' + esc(e.obs) : ''}</small></td><td>${brl(e.salario)}</td><td>${brl(e.premio ?? e.extras)}</td><td>${e.descontos ? brl(e.descontos) : ''}</td><td><b>${brl(e.total)}</b></td></tr>`).join('')}
-      <tr class="tot"><td>Total</td><td>${brl(t('salario'))}</td><td>${brl(t('premio') || t('extras'))}</td><td>${brl(t('descontos'))}</td><td>${brl(t('total'))}</td></tr></tbody></table>
-      <button class="btn" data-act="folhaNoApp">Editar esta folha no app</button>
-      <p class="mini">Copia os dias, VT e descontos acima para o app; daí em diante você ajusta salário, VT, extras e descontos aqui.</p></section>`;
-  } else {
+  {
     const fm = ap.faixaMes;
     const lista = S.funcs.filter((f) => { const pf = ap.porFunc[f.id]; return C.ativoEm(f, `${mk}-15`) || (pf && (pf.T || pf.F || pf.J || pf.premioDiario)) || ((M.folha || {})[f.id]); }).sort((a, b) => a.nome.localeCompare(b.nome));
-    let totGeral = 0, totVT = 0;
-    folha = lista.map((f) => {
+    const linhas = lista.map((f) => {
       const pf = ap.porFunc[f.id] || { T: 0, F: 0, J: 0, previstos: 0, presencaPct: 0, premioDiario: 0, bonus: 0, premioTotal: 0, elegivelBonus: false, dias: [] };
       const fo = (M.folha || {})[f.id] || {};
-      const r = C.folhaFunc(f, pf, fo, S.cfg);
-      totGeral += r.total; totVT += r.vt;
+      return { f, pf, fo, r: C.folhaFunc(f, pf, fo, S.cfg) };
+    });
+    const soma = (k) => C.r2(linhas.reduce((a, l) => a + l.r[k], 0));
+    const resumo = `<section class="card"><h3>Resumo da folha${daPlanilha ? ' <small>valores vindos da planilha, todos editáveis abaixo</small>' : ''}</h3>
+      <div class="rola"><table class="tab resumo-folha"><thead><tr><th>Nome</th><th>Salário</th><th>Prêmio</th><th>Extras</th><th>Desc.</th><th>Total</th><th>VT</th></tr></thead><tbody>
+      ${linhas.map(({ f, r }) => `<tr data-ancora="func-${f.id}" class="clic"><td><b>${esc(f.nome)}</b><small>${r.diasTrab} dias</small></td><td>${brl(r.salario)}</td><td>${brl(r.premio)}</td><td>${r.extras ? brl(r.extras) : '—'}</td><td>${r.descontos ? '−' + brl(r.descontos) : '—'}</td><td><b>${brl(r.total)}</b></td><td>${brl(r.vt)}</td></tr>`).join('')}
+      <tr class="tot"><td>Total</td><td>${brl(soma('salario'))}</td><td>${brl(soma('premio'))}</td><td>${brl(soma('extras'))}</td><td>${soma('descontos') ? '−' + brl(soma('descontos')) : '—'}</td><td>${brl(soma('total'))}</td><td>${brl(soma('vt'))}</td></tr>
+      </tbody></table></div>
+      <p class="mini">Total a desembolsar: <b>${brl(C.r2(soma('total') + soma('vt')))}</b> (folha + VT).</p></section>`;
+    folha = resumo + linhas.map(({ f, pf, fo, r }) => {
       const motivo = !ap.regraNova ? 'regra antiga: sem bônus' : !fm ? 'equipe abaixo da meta mensal' : (pf.elegivelBonus ? `meta mensal ${fm.nivel}` : `presença ${Math.round(pf.presencaPct * 100)}% < ${S.cfg.presencaMin}%`);
-      return `<section class="card func">
+      const item = (k, e, i, sinal) => `<div class="item-folha"><span>${sinal}</span><input data-fitem="${f.id}" data-k="${k}" data-i="${i}" data-c="desc" value="${esc(e.desc)}" placeholder="Descrição"><input data-fitem="${f.id}" data-k="${k}" data-i="${i}" data-c="valor" inputmode="decimal" value="${fmtN(e.valor)}" class="v"><button class="x" data-act="delFolha" data-id="${f.id}" data-k="${k}" data-i="${i}">✕</button></div>`;
+      return `<section class="card func" id="func-${f.id}">
         <h3>${esc(f.nome)} <small>${esc(f.funcao || 'função não definida')}</small></h3>
         <p class="mini">Trabalhou ${pf.T} · Faltas ${pf.F} · Justificadas ${pf.J}${pf.previstos ? ` · Presença ${Math.round(pf.presencaPct * 100)}%` : ''}</p>
-        <table class="tab desp"><tbody>
-          <tr><td>Salário <small>${brl(r.salMes)} ÷ 30 × <input class="mini-in" inputmode="numeric" data-folha="${f.id}" data-k="diasTrab" value="${r.diasTrab}"> dias</small></td><td class="r">${brl(r.salario)}</td></tr>
-          <tr><td>Prêmio diário <small>${pf.dias.filter((d) => d.valor).length} dias com prêmio${ap.regraNova ? '' : ' (regra antiga)'}</small></td><td class="r">${brl(pf.premioDiario)}</td></tr>
-          ${ap.regraNova ? `<tr><td>Bônus mensal <small>${motivo}</small></td><td class="r">${brl(pf.bonus)}</td></tr>` : ''}
-          ${r.fixos.map((x) => `<tr class="${x.ativo ? '' : 'riscado'}"><td>${x.sinal === '+' ? '+' : '−'} ${esc(x.desc)} <span class="tag">fixo${x.pct != null ? ' ' + pct(x.pct) : ''}</span>
-            <button class="btn link mini" data-act="fixoMes" data-id="${f.id}" data-i="${x.i}">${x.ativo ? 'não lançar este mês' : 'lançar este mês'}</button></td><td class="r">${x.sinal === '+' ? '' : '−'}${brl(x.valor)}</td></tr>`).join('')}
-          ${(fo.extras || []).map((e, i) => `<tr><td>+ ${esc(e.desc)}</td><td class="r">${brl(e.valor)} <button class="x" data-act="delFolha" data-id="${f.id}" data-k="extras" data-i="${i}">✕</button></td></tr>`).join('')}
-          ${(fo.descontos || []).map((e, i) => `<tr><td>− ${esc(e.desc)}</td><td class="r">−${brl(e.valor)} <button class="x" data-act="delFolha" data-id="${f.id}" data-k="descontos" data-i="${i}">✕</button></td></tr>`).join('')}
-          <tr class="tot"><td>Total a pagar <a href="#/demo/${mk}/${f.id}" class="tag">demonstrativo do prêmio</a></td><td class="r">${brl(r.total)}</td></tr>
-          <tr><td>VT <small><input class="mini-in" inputmode="numeric" data-folha="${f.id}" data-k="vtDias" value="${r.vtDias}"> dias × <input class="mini-in" inputmode="decimal" data-folha="${f.id}" data-k="vtDia" value="${fmtN(r.vtDia)}"></small></td><td class="r">${brl(r.vt)}</td></tr>
-        </tbody></table>
-        <form class="linha fExtra" data-id="${f.id}"><select name="k" style="max-width:7.5rem"><option value="extras">+ Extra</option><option value="descontos">− Desconto</option></select><input name="desc" placeholder="Hora extra, adiantamento…" required><input name="valor" inputmode="decimal" placeholder="R$" required style="max-width:5.5rem"><button class="btn">ok</button></form>
+        <div class="grade-folha">
+          <label>Salário do mês (R$)<input data-folha="${f.id}" data-k="salMes" inputmode="decimal" value="${fmtN(r.salMes)}"></label>
+          <label>Dias trabalhados (de 30)<input data-folha="${f.id}" data-k="diasTrab" inputmode="numeric" value="${r.diasTrab}"></label>
+          <div class="calc">= salário <b>${brl(r.salario)}</b></div>
+          <label>Prêmio do mês (R$)<input data-folha="${f.id}" data-k="premioManual" inputmode="decimal" value="${fo.premioManual != null ? fmtN(fo.premioManual) : ''}" placeholder="${fmtN(pf.premioTotal) || '0'}"></label>
+          <div class="calc span2">${fo.premioManual != null ? `<span class="alerta">${fo.premioOrigem === 'planilha' ? 'valor da planilha' : 'valor digitado'}</span> · calculado pelo app:  ${brl(pf.premioTotal)} <button class="btn link mini" data-act="premioAuto" data-id="${f.id}">usar o calculado</button>` : `calculado: diário ${brl(pf.premioDiario)}${ap.regraNova ? ` + bônus ${brl(pf.bonus)} (${motivo})` : ' (regra antiga)'} <a href="#/demo/${mk}/${f.id}" class="tag">demonstrativo</a>`}</div>
+          <label>VT: dias<input data-folha="${f.id}" data-k="vtDias" inputmode="numeric" value="${r.vtDias}"></label>
+          <label>VT: valor por dia (R$)<input data-folha="${f.id}" data-k="vtDia" inputmode="decimal" value="${fmtN(r.vtDia)}"></label>
+          <div class="calc">= VT <b>${brl(r.vt)}</b></div>
+        </div>
+        ${r.fixos.length ? `<h4>Lançamentos fixos</h4>${r.fixos.map((x) => `<div class="item-folha ${x.ativo ? '' : 'riscado'}"><span>${x.sinal === '+' ? '+' : '−'}</span><span class="fixo-desc">${esc(x.desc)} <span class="tag">fixo${x.pct != null ? ' ' + pct(x.pct) : ''}</span></span><b>${brl(x.valor)}</b><button class="btn link mini" data-act="fixoMes" data-id="${f.id}" data-i="${x.i}">${x.ativo ? 'não lançar' : 'lançar'}</button></div>`).join('')}` : ''}
+        <h4>Extras</h4>
+        ${(fo.extras || []).map((e, i) => item('extras', e, i, '+')).join('') || '<p class="mini">Nenhum extra neste mês.</p>'}
+        <button class="btn link" data-act="addFolhaItem" data-id="${f.id}" data-k="extras">+ Extra</button>
+        <h4>Descontos</h4>
+        ${(fo.descontos || []).map((e, i) => item('descontos', e, i, '−')).join('') || '<p class="mini">Nenhum desconto neste mês.</p>'}
+        <button class="btn link" data-act="addFolhaItem" data-id="${f.id}" data-k="descontos">+ Desconto</button>
+        <div class="total-folha"><span>Total a pagar</span><b>${brl(r.total)}</b></div>
+        <p class="mini">${brl(r.salario)} salário + ${brl(r.premio)} prêmio${r.extras ? ` + ${brl(r.extras)} extras` : ''}${r.descontos ? ` − ${brl(r.descontos)} descontos` : ''} · VT à parte: ${brl(r.vt)}</p>
         <input class="obs" data-folha="${f.id}" data-k="obs" placeholder="Observação (ex.: pago em 05/12)" value="${esc(fo.obs || '')}">
       </section>`;
-    }).join('') + `<section class="card"><h3>Total da folha <small>${brl(totGeral)} + VT ${brl(totVT)}</small></h3>
-      ${M.folhaApp ? '<button class="btn link" data-act="folhaVoltar">Voltar a mostrar a folha da planilha</button>' : ''}</section>`;
+    }).join('') + ((M.folhaLegado || []).length ? `<section class="card"><details><summary class="mini">Ver a folha original da planilha</summary>
+      <table class="tab"><thead><tr><th>Nome</th><th>Salário</th><th>Prêmio</th><th>Desc.</th><th>Total</th></tr></thead><tbody>
+      ${M.folhaLegado.map((e) => `<tr><td>${esc(e.nome)}<small>${e.diasTrab}/${e.diasMes} dias${e.vtDias ? ` · VT ${e.vtDias}×${brl(e.vtDia)}` : ''}${e.obs ? ' · ' + esc(e.obs) : ''}</small></td><td>${brl(e.salario)}</td><td>${brl(e.premio ?? e.extras)}</td><td>${e.descontos ? brl(e.descontos) : ''}</td><td><b>${brl(e.total)}</b></td></tr>`).join('')}
+      </tbody></table><button class="btn link perigo" data-act="folhaRestaurar">Desfazer minhas alterações e voltar aos valores da planilha</button></details></section>` : '');
   }
 
   const ficha = (f) => `
@@ -678,6 +689,22 @@ async function telaEquipe(mk) {
     const f = { id, nome, funcao: '', salario: base.salario || 0, vtDia: base.vtDia || 22, ativo: true, admissao: hojeISO() };
     S.funcs.push(f); S.fichaAberta = id; await salvarFunc(f); toast('Adicionado. Confira salário, VT e admissão.'); telaEquipe(mk);
   };
+}
+
+function prepararFolhaDaPlanilha(M) {
+  M.folha = M.folha || {};
+  for (const e of M.folhaLegado || []) {
+    const fo = M.folha[e.id] = M.folha[e.id] || {};
+    if (e.salMes) fo.salMes = e.salMes;
+    if (e.diasTrab != null) fo.diasTrab = e.diasTrab;
+    if (e.vtDias != null) fo.vtDias = e.vtDias;
+    if (e.vtDia != null) fo.vtDia = e.vtDia;
+    const pr = e.premio ?? null; if (pr != null) { fo.premioManual = pr; fo.premioOrigem = 'planilha'; }
+    if (e.descontos && !(fo.descontos || []).length) fo.descontos = [{ desc: 'Desconto (planilha)', valor: e.descontos }];
+    if (e.extras && !(fo.extras || []).length) fo.extras = [{ desc: 'Extras (planilha)', valor: e.extras }];
+    if (e.obs && !fo.obs) fo.obs = e.obs;
+  }
+  M.folhaApp = true; // passa a valer a folha do app (salva na primeira alteração)
 }
 
 // ---------- TELA: demonstrativo (Regulamento 4.3) ----------
@@ -1132,6 +1159,7 @@ async function exportar() {
 
 // ---------- eventos (delegação) ----------
 $app.addEventListener('click', async (ev) => {
+  const anc = ev.target.closest('tr[data-ancora]'); if (anc) { const alvo = document.getElementById(anc.dataset.ancora); if (alvo) alvo.scrollIntoView({ behavior: 'smooth', block: 'start' }); return; }
   const tr = ev.target.closest('tr[data-href]'); if (tr && !ev.target.closest('button,input')) { location.hash = tr.dataset.href; return; }
   const el = ev.target.closest('[data-act]'); if (!el) return;
   const act = el.dataset.act;
@@ -1229,6 +1257,9 @@ $app.addEventListener('click', async (ev) => {
       }
       M.folhaApp = true; salvarMes(mk); telaEquipe(mk); break;
     }
+    case 'addFolhaItem': { const M = S.meses[S.ctxEquipe]; M.folha = M.folha || {}; const fo = M.folha[el.dataset.id] = M.folha[el.dataset.id] || {}; (fo[el.dataset.k] = fo[el.dataset.k] || []).push({ desc: '', valor: 0 }); salvarMes(S.ctxEquipe); await telaEquipe(S.ctxEquipe); const ins = document.querySelectorAll(`[data-fitem="${el.dataset.id}"][data-k="${el.dataset.k}"][data-c=desc]`); if (ins.length) ins[ins.length - 1].focus(); break; }
+    case 'premioAuto': { const M = S.meses[S.ctxEquipe]; delete M.folha[el.dataset.id].premioManual; delete M.folha[el.dataset.id].premioOrigem; salvarMes(S.ctxEquipe); telaEquipe(S.ctxEquipe); break; }
+    case 'folhaRestaurar': { if (!confirm('Apagar as alterações feitas no app nesta folha e voltar aos valores da planilha?')) break; const M = S.meses[S.ctxEquipe]; M.folha = {}; M.folhaApp = false; salvarMes(S.ctxEquipe); telaEquipe(S.ctxEquipe); break; }
     case 'folhaVoltar': { const M = S.meses[S.ctxEquipe]; if (confirm('Voltar a mostrar a folha da planilha? Os ajustes feitos no app ficam guardados.')) { M.folhaApp = false; salvarMes(S.ctxEquipe); telaEquipe(S.ctxEquipe); } break; }
     case 'fixoMes': {
       const M = S.meses[S.ctxEquipe]; M.folha = M.folha || {}; const fo = M.folha[el.dataset.id] = M.folha[el.dataset.id] || {};
@@ -1326,7 +1357,8 @@ async function redesenhar(fn) {
   await new Promise((r) => setTimeout(r, 0)); // espera o foco ir para o próximo campo
   const a = document.activeElement;
   const sel = a && a !== document.body && a.matches('input,textarea,select')
-    ? ['data-pg', 'data-campo', 'data-folha', 'id'].map((k) => a.getAttribute(k) ? `[${k}="${a.getAttribute(k)}"]${k === 'data-folha' ? `[data-k="${a.dataset.k}"]` : ''}` : '').find(Boolean) : null;
+    ? (a.dataset.fitem ? `[data-fitem="${a.dataset.fitem}"][data-k="${a.dataset.k}"][data-i="${a.dataset.i}"][data-c="${a.dataset.c}"]`
+      : ['data-pg', 'data-campo', 'data-folha', 'id'].map((k) => a.getAttribute(k) ? `[${k}="${a.getAttribute(k)}"]${k === 'data-folha' ? `[data-k="${a.dataset.k}"]` : ''}` : '').find(Boolean)) : null;
   await fn();
   if (sel) { const n = document.querySelector(sel); if (n) { n.focus(); if (n.select) n.select(); } }
 }
@@ -1370,10 +1402,19 @@ $app.addEventListener('change', async (ev) => {
     if (k !== 'obs') { delete d.legado; delete d.premioLeg; S.abrirPlanilha = true; if (!d[k]) delete d[k]; }
     salvarMes(S.ctxDia.mk); if (k !== 'obs') redesenhar(() => telaDia(S.ctxDia.iso)); return;
   }
+  if (el.dataset.fitem) {
+    const mk = S.ctxEquipe, M = S.meses[mk]; M.folha = M.folha || {};
+    const lst = (M.folha[el.dataset.fitem] = M.folha[el.dataset.fitem] || {})[el.dataset.k] || [];
+    const it = lst[+el.dataset.i]; if (!it) return;
+    it[el.dataset.c] = el.dataset.c === 'valor' ? num(el.value) : el.value;
+    salvarMes(mk); if (el.dataset.c === 'valor') redesenhar(() => telaEquipe(mk)); return;
+  }
   if (el.dataset.folha) {
     const mk = S.ctxEquipe, M = S.meses[mk], id = el.dataset.folha, k = el.dataset.k;
     M.folha = M.folha || {}; M.folha[id] = M.folha[id] || {};
-    M.folha[id][k] = k === 'obs' ? el.value : num(el.value);
+    if (k === 'premioManual') delete M.folha[id].premioOrigem;
+    if (k === 'premioManual' && el.value.trim() === '') delete M.folha[id][k];
+    else M.folha[id][k] = k === 'obs' ? el.value : num(el.value);
     salvarMes(mk); if (k !== 'obs') redesenhar(() => telaEquipe(mk)); return;
   }
   if (el.dataset.ed || el.dataset.edi != null) return;
