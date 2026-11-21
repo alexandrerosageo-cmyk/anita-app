@@ -5,7 +5,7 @@ import * as V from './convenio.js';
 import { EMAIL_BACKUP } from './firebase-config.js';
 import { criarStore, salvarConfigFirebase, interpretarConfig, lerConfigFirebase, usarFirebasePadrao } from './store.js';
 
-const VERSAO = '2.10.0';
+const VERSAO = '2.11.0';
 const $app = document.getElementById('app');
 const S = { store: null, cfg: null, funcs: [], frota: [], meses: {}, tipoSel: 'paga', salvando: 0 };
 
@@ -83,9 +83,48 @@ function toast(msg, erro) {
 function status(txt) { const el = document.getElementById('status'); if (el) el.textContent = txt; }
 
 // ---------- dados ----------
+// Despesas da planilha: até out/2026 viram lançamentos em bloco (com tipo); de nov/2026 em diante são lançadas à mão
+const ULTIMO_MES_PLANILHA = '2026-10';
+const CATS_FOLHA = [
+  { id: 'folha', nome: 'Salários, férias e 13º' }, { id: 'vt', nome: 'Vale-transporte' },
+  { id: 'premios', nome: 'Prêmios e comissões' }, { id: 'impostos', nome: 'Impostos' }, { id: 'divulgacao', nome: 'Divulgação' },
+];
+function tipoDaPlanilha(desc) {
+  const d = normTxt(desc);
+  if (/^salario|ferias|13|encargo/.test(d)) return 'folha';
+  if (/^vt\b|vale.?transp/.test(d)) return 'vt';
+  if (/premio|comiss/.test(d)) return 'premios';
+  if (/imposto/.test(d)) return 'impostos';
+  if (/aluguel|iptu|agua/.test(d)) return 'aluguel';
+  if (/produto/.test(d)) return 'produtos';
+  if (/software/.test(d)) return 'software';
+  if (/contador/.test(d)) return 'contador';
+  if (/\balex\b|pro.?labore|retirada/.test(d)) return 'prolabore';
+  if (/extratora|maquina|compressor|conserto|manutenc|ppci/.test(d)) return 'manutencao';
+  if (/banner|divulg|propaganda/.test(d)) return 'divulgacao';
+  if (/luz|energia|internet|telefone/.test(d)) return 'luz';
+  return 'outros';
+}
+function migrarDespesasPlanilha(mk, M) {
+  if (!M) return false;
+  if (!(M.despesasLegado || []).length) {
+    if (M.despesasLegado) { delete M.despesasLegado; return true; }
+    if (mk <= ULTIMO_MES_PLANILHA && !M.semAuto && Object.keys(M.dias || {}).length) { M.semAuto = true; return true; } // meses da planilha nunca somam folha automática
+    return false;
+  }
+  if (mk <= ULTIMO_MES_PLANILHA) {
+    M.despesas = M.despesas || [];
+    M.despesasLegado.forEach((x, i) => M.despesas.push({ id: `pl${mk.replace('-', '')}${i}`, data: `${mk}-01`, cat: tipoDaPlanilha(x.desc), forn: '', desc: x.desc, valor: Number(x.valor) || 0, ...(x.obs ? { obs: x.obs } : {}), origem: 'planilha' }));
+    M.semAuto = true; // folha, VT e impostos já estão nas linhas da planilha
+  }
+  delete M.despesasLegado;
+  return true;
+}
+
 async function mes(mk) {
   if (!S.meses[mk]) {
     S.meses[mk] = (await S.store.get('meses', mk)) || { dias: {} };
+    if (migrarDespesasPlanilha(mk, S.meses[mk])) salvarMes(mk);
     // Alex é pró-labore: corrige lançamentos fixos antigos que entraram como "Outros"
     let fix = false;
     for (const d of S.meses[mk].despesas || []) if (d.fixa && d.cat === 'outros' && /\balex\b/i.test(d.desc || '')) { d.cat = 'prolabore'; fix = true; }
@@ -154,6 +193,7 @@ async function carregarBase() {
   S.cfg = { ...CFG_PADRAO, ...((await S.store.get('config', 'app')) || {}) };
   if (!Array.isArray(S.cfg.pagamentos) || !S.cfg.pagamentos.length) S.cfg.pagamentos = PAGAMENTOS_PADRAO();
   if (!Array.isArray(S.cfg.categorias) || !S.cfg.categorias.length) S.cfg.categorias = CATEGORIAS_PADRAO();
+  for (const c of CATS_FOLHA) if (!S.cfg.categorias.some((x) => x.id === c.id)) S.cfg.categorias.push(c);
   S.cfg.fornecedores = S.cfg.fornecedores || [];
   S.cfg.materiais = S.cfg.materiais || [];
   if (S.cfg.categorias.some((c) => c.id === 'prolabore')) for (const f of S.cfg.despesasFixas || []) if (!f.cat && /\balex\b/i.test(f.desc || '')) f.cat = 'prolabore';
@@ -704,18 +744,9 @@ async function telaEquipe(mk) {
 }
 
 function prepararFolhaDaPlanilha(M) {
+  const base = C.folhaDaPlanilha(M);
   M.folha = M.folha || {};
-  for (const e of M.folhaLegado || []) {
-    const fo = M.folha[e.id] = M.folha[e.id] || {};
-    if (e.salMes) fo.salMes = e.salMes;
-    if (e.diasTrab != null) fo.diasTrab = e.diasTrab;
-    if (e.vtDias != null) fo.vtDias = e.vtDias;
-    if (e.vtDia != null) fo.vtDia = e.vtDia;
-    const pr = e.premio ?? null; if (pr != null) { fo.premioManual = pr; fo.premioOrigem = 'planilha'; }
-    if (e.descontos && !(fo.descontos || []).length) fo.descontos = [{ desc: 'Desconto (planilha)', valor: e.descontos }];
-    if (e.extras && !(fo.extras || []).length) fo.extras = [{ desc: 'Extras (planilha)', valor: e.extras }];
-    if (e.obs && !fo.obs) fo.obs = e.obs;
-  }
+  for (const [id, fo] of Object.entries(base)) M.folha[id] = { ...fo, ...(M.folha[id] || {}) };
   M.folhaApp = true; // passa a valer a folha do app (salva na primeira alteração)
 }
 
@@ -755,7 +786,7 @@ async function telaDemo(mk, id) {
 // ---------- TELA: análise ----------
 async function carregarTodosMeses() {
   if (S.todosCarregados) return;
-  for (const m of await S.store.list('meses')) { const { id, ...r } = m; if (!S.meses[id]) S.meses[id] = { dias: {}, ...r }; }
+  for (const m of await S.store.list('meses')) { const { id, ...r } = m; if (!S.meses[id]) { S.meses[id] = { dias: {}, ...r }; if (migrarDespesasPlanilha(id, S.meses[id])) salvarMes(id); } }
   S.todosCarregados = true;
 }
 const pctVar = (a, b) => (b ? Math.round(((a - b) / Math.abs(b)) * 100) : null);
@@ -915,18 +946,20 @@ async function telaDespesas(mk) {
     </section>`;
   })();
 
+  const autoMes = !M.semAuto && mk > ULTIMO_MES_PLANILHA;
   const corpo = `
   <div class="navdata"><a class="btn ic" href="#/despesas/${somaMes(mk, -1)}">‹</a><b class="titmes">${nomeMes(mk)}</b><a class="btn ic" href="#/despesas/${somaMes(mk, 1)}">›</a></div>
   <div class="kpis"><div class="kpi"><small>Despesas lançadas</small><b>${brl(total)}</b></div><div class="kpi"><small>Lançamentos</small><b>${lista.length}</b></div></div>
   ${editor || `<div class="linha"><button class="btn grande" data-act="novaDesp">+ Nova despesa</button></div>
-    ${(S.cfg.despesasFixas || []).length && !fixasLancadas ? `<button class="btn link" data-act="lancarFixas">Lançar despesas fixas do mês (${S.cfg.despesasFixas.map((d) => esc(d.desc)).join(', ')})</button>` : ''}`}
+    ${(S.cfg.despesasFixas || []).length && !fixasLancadas && mk > ULTIMO_MES_PLANILHA ? `<button class="btn link" data-act="lancarFixas">Lançar despesas fixas do mês (${S.cfg.despesasFixas.map((d) => esc(d.desc)).join(', ')})</button>` : ''}`}
 
+  ${autoMes ? `<p class="mini centro">Salários, VT, prêmios e impostos entram sozinhos (da folha e do caixa) no resultado do mês. Aqui lance as demais despesas.</p>` : ''}
   ${lista.length ? `<section class="card"><h3>Por tipo</h3>${barras(porTipo(lista))}</section>` : ''}
 
   <section class="card"><h3>Lançamentos</h3>
     ${lista.length ? `<table class="tab"><tbody>${[...lista].sort((a, b) => (b.data || '').localeCompare(a.data || '')).map((d) => `<tr data-act="editarDesp" data-i="${d._i}" class="clic">
       <td>${d.data ? dataBR(d.data).slice(0, 5) : ''}</td>
-      <td><b>${esc(d.forn || d.desc || nomeCat(d.cat))}</b><small>${esc(nomeCat(d.cat))}${d.itens && d.itens.length ? ' · ' + d.itens.map((i) => esc(i.mat)).join(', ') : (d.desc && d.forn ? ' · ' + esc(d.desc) : '')}</small></td>
+      <td><b>${esc(d.forn || d.desc || nomeCat(d.cat))}</b>${d.origem === 'planilha' ? ' <span class="tag">planilha</span>' : ''}<small>${esc(nomeCat(d.cat))}${d.itens && d.itens.length ? ' · ' + d.itens.map((i) => esc(i.mat)).join(', ') : (d.desc && d.forn ? ' · ' + esc(d.desc) : '')}</small></td>
       <td class="r">${brl(d.total)}</td></tr>`).join('')}</tbody></table>` : '<p class="vazio">Nenhuma despesa lançada neste mês.</p>'}
     ${(M.despesasLegado || []).length ? `<details><summary class="mini">Despesas importadas da planilha (${brl(M.despesasLegado.reduce((a, d) => a + (Number(d.valor) || 0), 0))})</summary><table class="tab"><tbody>${M.despesasLegado.map((d) => `<tr><td>${esc(d.desc)}${d.obs ? `<small>${esc(d.obs)}</small>` : ''}</td><td class="r">${brl(d.valor)}</td></tr>`).join('')}</tbody></table></details>` : ''}
   </section>
@@ -1139,7 +1172,7 @@ async function importar(file) {
 async function gerarExcel() {
   status('Gerando Excel…');
   const meses = {};
-  for (const m of await S.store.list('meses')) { const { id, ...r } = m; meses[id] = r; }
+  for (const m of await S.store.list('meses')) { const { id, ...r } = m; meses[id] = S.meses[id] || r; migrarDespesasPlanilha(id, meses[id]); }
   const bytes = montarPlanilha({ cfg: S.cfg, funcs: S.funcs, frota: S.frota, meses });
   status('');
   return new File([bytes], nomeArquivoBackup(hojeISO()), { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });

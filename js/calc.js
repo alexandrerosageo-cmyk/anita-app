@@ -210,6 +210,24 @@ export function folhaFunc(f, pf, folha, cfg, mk) {
 }
 
 // Despesas e resultado do mês
+// folha do mês vinda da planilha, no formato da folha do app (dias, VT, prêmio, descontos…)
+export function folhaDaPlanilha(mes) {
+  const out = {};
+  for (const e of (mes && mes.folhaLegado) || []) {
+    const fo = out[e.id] = {};
+    if (e.salMes) fo.salMes = e.salMes;
+    if (e.diasTrab != null) fo.diasTrab = e.diasTrab;
+    if (e.vtDias != null) fo.vtDias = e.vtDias;
+    if (e.vtDia != null) fo.vtDia = e.vtDia;
+    if (e.premio != null) { fo.premioManual = e.premio; fo.premioOrigem = 'planilha'; }
+    if (e.descontos) fo.descontos = [{ desc: 'Desconto (planilha)', valor: e.descontos }];
+    if (e.extras) fo.extras = [{ desc: 'Extras (planilha)', valor: e.extras }];
+    if (e.obs) fo.obs = e.obs;
+  }
+  return out;
+}
+export const folhaEfetiva = (mes) => (mes && (mes.folhaLegado || []).length && !mes.folhaApp ? { ...folhaDaPlanilha(mes), ...(mes.folha || {}) } : (mes && mes.folha) || {});
+
 export const valorDesp = (d) => r2(Array.isArray(d.itens) && d.itens.length ? d.itens.reduce((a, i) => a + (Number(i.valor) || 0), 0) : d.valor);
 
 export const dinheiroMes = (ap) => r2(ap.lista.reduce((a, l) => a + (Number(((l.dia || {}).pg || {}).din) || 0), 0));
@@ -218,18 +236,18 @@ export const aoContador = (ap) => r2(ap.tot.receita - dinheiroMes(ap));
 export function resultadoMes(ap, mes, cfg, funcs) {
   mes = mes || {};
   const manuais = (mes.despesas || []).map((x) => ({ ...x, valor: valorDesp(x), auto: false }));
-  if (mes.despesasLegado) {
-    const desp = [...mes.despesasLegado.map((x) => ({ ...x, auto: false, legado: true })), ...manuais];
+  if (mes.despesasLegado || mes.semAuto) {
+    const desp = [...(mes.despesasLegado || []).map((x) => ({ ...x, auto: false, legado: true })), ...manuais];
     const total = r2(desp.reduce((a, b) => a + (Number(b.valor) || 0), 0));
-    return { auto: [], manuais, legadas: mes.despesasLegado, despesas: desp, total, resultado: r2(ap.tot.receita - total), legado: true };
+    return { auto: [], manuais, legadas: mes.despesasLegado || [], despesas: desp, total, resultado: r2(ap.tot.receita - total), legado: true };
   }
   const auto = [];
-  if (ap.regraNova) {
+  {
     let sal = 0, vt = 0, pr = 0, ex = 0;
     for (const f of funcs) {
       const pf = ap.porFunc[f.id];
       if (!pf || (!pf.T && !pf.F && !pf.J && !f.ativo)) continue;
-      const fo = folhaFunc(f, pf, (mes.folha || {})[f.id], cfg, ap.mk);
+      const fo = folhaFunc(f, pf, folhaEfetiva(mes)[f.id], cfg, ap.mk);
       sal += fo.salario; vt += fo.vt; pr += fo.premio; ex += fo.extras - fo.descontos;
     }
     auto.push({ desc: 'Salários', valor: r2(sal), auto: true });
