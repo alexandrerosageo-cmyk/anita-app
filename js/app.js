@@ -5,7 +5,7 @@ import * as V from './convenio.js';
 import { EMAIL_BACKUP } from './firebase-config.js';
 import { criarStore, salvarConfigFirebase, interpretarConfig, lerConfigFirebase, usarFirebasePadrao } from './store.js';
 
-const VERSAO = '2.15.0';
+const VERSAO = '2.15.1';
 const $app = document.getElementById('app');
 const S = { store: null, cfg: null, funcs: [], frota: [], meses: {}, tipoSel: 'paga', salvando: 0 };
 
@@ -1129,7 +1129,7 @@ async function telaSulgasPdf(ref) {
       <table class="pdf-tab"><thead><tr><th>Placa</th><th>Motorista / usuário</th><th style="text-align:right">Lavagens</th></tr></thead><tbody>
       ${Object.entries(porPlaca).sort((a, b) => b[1].n - a[1].n || a[0].localeCompare(b[0])).map(([pl, x]) => `<tr><td><b>${esc(pl)}</b></td><td>${esc(x.mot)}</td><td style="text-align:right">${x.n}</td></tr>`).join('')}
       </tbody></table>
-      <div class="assin pdf-assin"><span>Anita Parking Estacionamento</span><span>Sulgás · conferido por</span></div>
+      <div class="assin pdf-assin um"><span><b>Alexandre Rosa</b><br>Responsável · Anita Parking Estacionamento</span></div>
       <p class="pdf-nota">${fech ? `Fechamento emitido em ${dataBR(fech.gerado.slice(0, 10))}. ` : `Gerado em ${dataBR(hojeISO())}. `}${fech || ref === 'aberto' ? 'Período: da impressão anterior até esta impressão.' : 'Período de faturamento do dia 19 ao dia 18 (planilha).'}</p>
     </section></div>`;
   document.title = `Lavagens Sulgás ${dataBR(per.ini).replace(/\//g, '-')} a ${dataBR(per.fim).replace(/\//g, '-')}`;

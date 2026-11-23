@@ -298,3 +298,4 @@ body:has(.salvarbar) .toast { bottom: calc(135px + env(safe-area-inset-bottom));
 .pdf-resumo.tres { grid-template-columns: repeat(3, 1fr); }
 .pdf-assin { margin-top: 2.5rem; }
 .pdf-tit small.previa { color: var(--erro); font-weight: 800; }
+.pdf-assin.um { justify-content: flex-end; } .pdf-assin.um span { flex: 0 0 55%; font-size: 12px; }
