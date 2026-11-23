@@ -2,8 +2,12 @@
 // e cálculo de vagas simultâneas por hora, carros extras e valor a cobrar. Funções puras.
 import { r2, pad } from './calc.js';
 
-export const CONV_PADRAO = { nome: 'Altis', filtro: 'Altis', valorDia: 375, vagas: 10, valorExtra: 14, regra: 'hora', fechamento: '15:30' };
-export const REGRAS = { hora: 'Por hora (soma o excedente de cada hora)', pico: 'Pico do dia (só o maior momento conta)', carro: 'Por carro (cada carro que entrou com as vagas cheias)' };
+export const CONV_PADRAO = { nome: 'Altis', filtro: 'Altis', valorDia: 375, vagas: 10, valorExtra: 14, regra: 'periodo', inicio: '09:30', fechamento: '15:30' };
+export const REGRAS = {
+  periodo: 'Por período: cada vez que passa das vagas no dia, 1 extra (cada carro conta uma vez)',
+  pico: 'Pico do dia: só o maior momento conta',
+  hora: 'Por hora: soma o excedente de cada hora',
+};
 
 // ---------- leitura de arquivos ----------
 const norm = (s) => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
@@ -113,30 +117,34 @@ export const fmtHora = hm;
 // ---------- cálculo ----------
 export function calcular(carros, cfgConv) {
   const c = { ...CONV_PADRAO, ...(cfgConv || {}) };
-  const [fh, fm] = String(c.fechamento || '15:30').split(':').map(Number);
-  const fecha = fh * 60 + (fm || 0);
-  const lista = carros.map((x) => ({ ...x, sAj: x.s == null ? Math.max(fecha, x.e + 1) : x.s, semSaida: x.s == null })).sort((a, b) => a.e - b.e);
-  if (!lista.length) return { carros: 0, horas: [], pico: 0, extras: 0, total: 0, regra: c.regra, cfg: c, semSaida: 0 };
-  // lotação nos instantes de entrada (carro conta de e até s, excluindo s)
-  const ocup = (t) => lista.filter((x) => x.e <= t && x.sAj > t).length;
-  const ini = Math.floor(lista[0].e / 60), fim = Math.floor((Math.max(...lista.map((x) => x.sAj)) - 0.001) / 60);
+  if (c.regra === 'carro') c.regra = 'periodo';
+  const hhmm = (t, pad0) => { const [h, m] = String(t || pad0).split(':').map(Number); return h * 60 + (m || 0); };
+  const ini = hhmm(c.inicio, '09:30'), fecha = hhmm(c.fechamento, '15:30');
+  // cada carro conta só dentro do período do convênio (ex.: 9h30–15h30)
+  const lista = carros.map((x) => ({ ...x, sAj: x.s == null ? fecha : x.s, semSaida: x.s == null }))
+    .map((x) => ({ ...x, eP: Math.max(x.e, ini), sP: Math.min(x.sAj, fecha) }))
+    .filter((x) => x.sP > x.eP).sort((a, b) => a.eP - b.eP || a.sP - b.sP);
+  const fora = carros.length - lista.length;
+  if (!lista.length) return { carros: 0, fora, horas: [], pico: 0, momentoPico: '', momentosExtra: [], extras: 0, valorDia: r2(c.valorDia), valorExtras: 0, total: r2(c.valorDia), regra: c.regra, semSaida: 0, cfg: { valorDia: c.valorDia, vagas: c.vagas, valorExtra: c.valorExtra, regra: c.regra, inicio: c.inicio, fechamento: c.fechamento } };
+  const ocup = (t) => lista.filter((x) => x.eP <= t && x.sP > t).length;
+  // por período: percorre as entradas; cada carro que entra com as vagas já cheias é 1 extra (contado uma vez)
+  let extrasPeriodo = Math.max(0, ocup(ini) - c.vagas); // quem já estava além das vagas na abertura do período
+  const momentos = [];
+  for (const x of lista) if (x.eP > ini && ocup(x.eP) > c.vagas) { extrasPeriodo++; momentos.push(hm(x.eP)); }
+  const hIni = Math.floor(ini / 60), hFim = Math.floor((fecha - 0.001) / 60);
   const horas = [];
-  for (let h = ini; h <= fim; h++) {
-    const a = h * 60, b = a + 60;
-    const instantes = [a, ...lista.filter((x) => x.e > a && x.e < b).map((x) => x.e)];
+  for (let h = hIni; h <= hFim; h++) {
+    const a = Math.max(h * 60, ini), b = Math.min(h * 60 + 60, fecha);
+    const instantes = [a, ...lista.filter((x) => x.eP > a && x.eP < b).map((x) => x.eP)];
     const max = Math.max(0, ...instantes.map(ocup));
-    const passaram = lista.filter((x) => x.e < b && x.sAj > a).length;
-    horas.push({ h, rotulo: `${pad(h)}h`, max, passaram, extras: Math.max(0, max - c.vagas) });
+    horas.push({ h, rotulo: `${pad(h)}h`, max, passaram: lista.filter((x) => x.eP < b && x.sP > a).length, extras: Math.max(0, max - c.vagas) });
   }
   const pico = Math.max(0, ...horas.map((x) => x.max));
-  let extras;
-  if (c.regra === 'pico') extras = Math.max(0, pico - c.vagas);
-  else if (c.regra === 'carro') extras = lista.filter((x) => ocup(x.e) > c.vagas).length;
-  else extras = horas.reduce((a, x) => a + x.extras, 0);
-  const momentoPico = (() => { let best = { t: lista[0].e, n: 0 }; for (const x of lista) { const n = ocup(x.e); if (n > best.n) best = { t: x.e, n }; } return hm(best.t); })();
+  const extras = c.regra === 'pico' ? Math.max(0, pico - c.vagas) : c.regra === 'hora' ? horas.reduce((a, x) => a + x.extras, 0) : extrasPeriodo;
+  let best = { t: lista[0].eP, n: 0 }; for (const x of lista) { const n = ocup(x.eP); if (n > best.n) best = { t: x.eP, n }; }
   return {
-    carros: lista.length, horas, pico, momentoPico, extras, regra: c.regra,
+    carros: lista.length, fora, horas, pico, momentoPico: hm(best.t), extras, momentosExtra: c.regra === 'periodo' ? momentos : [], regra: c.regra,
     valorDia: r2(c.valorDia), valorExtras: r2(extras * c.valorExtra), total: r2(c.valorDia + extras * c.valorExtra),
-    semSaida: lista.filter((x) => x.semSaida).length, cfg: { valorDia: c.valorDia, vagas: c.vagas, valorExtra: c.valorExtra, regra: c.regra },
+    semSaida: lista.filter((x) => x.semSaida).length, cfg: { valorDia: c.valorDia, vagas: c.vagas, valorExtra: c.valorExtra, regra: c.regra, inicio: c.inicio, fechamento: c.fechamento },
   };
 }

@@ -5,7 +5,7 @@ import * as V from './convenio.js';
 import { EMAIL_BACKUP } from './firebase-config.js';
 import { criarStore, salvarConfigFirebase, interpretarConfig, lerConfigFirebase, usarFirebasePadrao } from './store.js';
 
-const VERSAO = '2.11.1';
+const VERSAO = '2.12.0';
 const $app = document.getElementById('app');
 const S = { store: null, cfg: null, funcs: [], frota: [], meses: {}, tipoSel: 'paga', salvando: 0 };
 
@@ -279,6 +279,7 @@ async function telaDia(iso) {
   const mk = mkDe(iso), dd = iso.slice(8);
   const M = await mes(mk);
   S.ctxDia = { iso, mk, dd };
+  { const d0 = M.dias[dd]; if (d0 && d0.convSab && d0.convSab.res && d0.convSab.res.regra !== cfgConv().regra && !(S.cfg.convSab || {}).regraRevista) await gravarConvenio(iso, d0.convSab.carros, { arquivo: d0.convSab.arquivo, ignorados: d0.convSab.ignorados }); }
   const dia = M.dias[dd] || {};
   const nova = C.regraNova(iso, S.cfg);
   const p = C.premioDia(dia, iso, S.cfg);
@@ -370,7 +371,7 @@ async function telaDia(iso) {
 }
 
 // ---------- convênio de sábados/feriados ----------
-const cfgConv = () => ({ ...V.CONV_PADRAO, ...(S.cfg.convSab || {}) });
+const cfgConv = () => { const c = { ...V.CONV_PADRAO, ...(S.cfg.convSab || {}) }; if (!S.cfg.convSab || !S.cfg.convSab.regraRevista) { c.regra = 'periodo'; } return c; };
 function blocoConvenio(dia, iso) {
   const c = cfgConv(), cv = dia.convSab;
   if (!cv) return `<section class="card conv"><h3>Convênio ${esc(c.nome)}</h3>
@@ -388,6 +389,7 @@ function blocoConvenio(dia, iso) {
       <tr><td>Extras: ${r.extras} × ${brl(r.cfg.valorExtra)} <small>${esc(V.REGRAS[r.regra] || r.regra)}</small></td><td class="r">${brl(r.valorExtras)}</td></tr>
       <tr class="tot"><td>Total a cobrar</td><td class="r">${brl(r.total)}</td></tr>
     </tbody></table>
+    <p class="mini">Período considerado: ${esc(r.cfg.inicio || c.inicio)} às ${esc(r.cfg.fechamento || c.fechamento)}${r.fora ? ` · ${r.fora} carro(s) fora do período não contam` : ''}${(r.momentosExtra || []).length ? ` · passou das ${r.cfg.vagas} vagas às ${r.momentosExtra.join(', ')}` : ''}.</p>
     ${r.semSaida ? `<p class="mini alerta">${r.semSaida} carro(s) sem horário de saída: considerados até ${esc(c.fechamento)}.</p>` : ''}
     ${mudou ? `<p class="mini alerta">Os valores do convênio mudaram em Ajustes depois deste cálculo. <button class="btn link mini" data-act="convRecalc">Recalcular</button></p>` : ''}
     <p class="mini">Lançado em Convênios no caixa do dia. Arquivo: ${esc(cv.arquivo || 'texto colado')}${cv.ignorados ? ` · ${cv.ignorados} linha(s) de outras tabelas ignoradas` : ''}.</p>
@@ -1090,7 +1092,8 @@ async function telaAjustes() {
       <label>Valor por dia (R$)<input data-conv="valorDia" inputmode="decimal" value="${fmtN(c.valorDia)}"></label>
       <label>Vagas simultâneas incluídas<input data-conv="vagas" inputmode="numeric" value="${c.vagas}"></label>
       <label>Valor por carro extra (R$)<input data-conv="valorExtra" inputmode="decimal" value="${fmtN(c.valorExtra)}"></label>
-      <label>Carro sem saída conta até<input type="time" data-conv="fechamento" value="${esc(c.fechamento)}"></label>
+      <label>Período do convênio: início<input type="time" data-conv="inicio" value="${esc(c.inicio)}"></label>
+      <label>Período do convênio: fim<input type="time" data-conv="fechamento" value="${esc(c.fechamento)}"></label>
     </div>
     <label>Como contar os carros extras<select data-conv="regra">${Object.entries(V.REGRAS).map(([k, n]) => `<option value="${k}" ${c.regra === k ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
     <p class="mini">Dias já calculados mantêm os valores da época. Num dia, use "Recalcular" para aplicar os novos.</p>`; })()}
@@ -1443,7 +1446,7 @@ $app.addEventListener('change', async (ev) => {
   if (el.dataset.act === 'irData' && el.value) { location.hash = '#/hoje/' + el.value; return; }
   if (el.dataset.act === 'feriado') { const d = diaAtual(); if (el.checked) d.feriado = true; else delete d.feriado; salvarMes(S.ctxDia.mk); telaDia(S.ctxDia.iso); return; }
   if (el.id === 'convArq' && el.files[0]) { const f = el.files[0]; try { await processarConvenio(await V.lerArquivo(f.name, await f.arrayBuffer()), f.name); } catch (e) { toast(e.message, true); } return; }
-  if (el.dataset.conv) { const c = S.cfg.convSab = { ...cfgConv(), ...(S.cfg.convSab || {}) }; const k = el.dataset.conv; c[k] = ['valorDia', 'vagas', 'valorExtra'].includes(k) ? num(el.value) : el.value; await salvarCfg(); status('Salvo ✓'); return; }
+  if (el.dataset.conv) { const c = S.cfg.convSab = { ...(S.cfg.convSab || {}), ...cfgConv(), regraRevista: true }; const k = el.dataset.conv; c[k] = ['valorDia', 'vagas', 'valorExtra'].includes(k) ? num(el.value) : el.value; await salvarCfg(); status('Salvo ✓'); return; }
   if (el.dataset.pg && S.ctxDia) {
     const d = diaAtual(); d.pg = d.pg || {}; const v = num(el.value);
     if (v) d.pg[el.dataset.pg] = v; else delete d.pg[el.dataset.pg];
