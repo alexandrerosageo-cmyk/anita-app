@@ -5,7 +5,7 @@ import * as V from './convenio.js';
 import { EMAIL_BACKUP } from './firebase-config.js';
 import { criarStore, salvarConfigFirebase, interpretarConfig, lerConfigFirebase, usarFirebasePadrao } from './store.js';
 
-const VERSAO = '2.12.0';
+const VERSAO = '2.13.0';
 const $app = document.getElementById('app');
 const S = { store: null, cfg: null, funcs: [], frota: [], meses: {}, tipoSel: 'paga', salvando: 0 };
 
@@ -248,6 +248,7 @@ function telaLogin(erro) {
 
 // ---------- roteamento ----------
 async function rotear() {
+  document.title = 'Estacionamento Anita';
   const [, rota = 'hoje', a, b] = (location.hash || '#/hoje').split('/');
   S.rota = rota;
   try {
@@ -257,6 +258,7 @@ async function rotear() {
     else if (rota === 'demo') await telaDemo(a, b);
     else if (rota === 'sulgas') await telaSulgas(a || hojeISO());
     else if (rota === 'despesas') await telaDespesas(a || mkDe(hojeISO()));
+    else if (rota === 'convpdf') await telaConvPdf(a);
     else if (rota === 'analise') await telaAnalise(a || 'mes', b || `${mkDe(hojeISO())}-01`);
     else if (rota === 'ajustes') await telaAjustes();
     else location.hash = '#/hoje';
@@ -394,8 +396,58 @@ function blocoConvenio(dia, iso) {
     ${mudou ? `<p class="mini alerta">Os valores do convênio mudaram em Ajustes depois deste cálculo. <button class="btn link mini" data-act="convRecalc">Recalcular</button></p>` : ''}
     <p class="mini">Lançado em Convênios no caixa do dia. Arquivo: ${esc(cv.arquivo || 'texto colado')}${cv.ignorados ? ` · ${cv.ignorados} linha(s) de outras tabelas ignoradas` : ''}.</p>
     <details><summary class="mini">Ver os ${r.carros} carros</summary><table class="tab"><tbody>${[...cv.carros].sort((a, b) => a.e - b.e).map((x) => `<tr><td>${esc(x.placa)}</td><td>${V.fmtHora(x.e)} → ${x.s == null ? '?' : V.fmtHora(Math.min(x.s, 1439))}</td><td><small>${esc(x.ticket || '')}</small></td></tr>`).join('')}</tbody></table></details>
-    <div class="linha"><label class="btn arquivo">Trocar relatório<input type="file" id="convArq" accept=".xlsx,.xls,.csv,.txt,.htm,.html" hidden></label><button class="btn link perigo" data-act="convRemover">Remover</button></div>
+    <div class="linha"><a class="btn pdfbtn" href="#/convpdf/${iso}">📄 PDF para o parceiro</a><label class="btn arquivo">Trocar relatório<input type="file" id="convArq" accept=".xlsx,.xls,.csv,.txt,.htm,.html" hidden></label><button class="btn link perigo" data-act="convRemover">Remover</button></div>
   </section>`;
+}
+
+// ---------- PDF do convênio (página para imprimir / salvar em PDF) ----------
+function folhaConvDia(iso, dia) {
+  const cv = dia.convSab, r = cv.res, c = cfgConv();
+  const extra = new Set(r.placasExtra || []);
+  const maxH = Math.max(r.cfg.vagas, ...r.horas.map((h) => h.max), 1);
+  const perm = (x) => x.s == null ? '—' : (() => { const m = Math.round(Math.min(x.s, 1439) - x.e); return `${Math.floor(m / 60)}h${C.pad(m % 60)}`; })();
+  return `<section class="pdf-pag">
+    <header class="pdf-cab"><div><b>ANITA PARKING ESTACIONAMENTO LTDA.</b><small>CNPJ 29.215.496/0001-00 · Porto Alegre/RS</small></div><div class="pdf-tit">Convênio ${esc(c.nome)}<small>${C.ehSabado(iso) ? 'Sábado' : 'Feriado'}, ${dataBR(iso)}</small></div></header>
+    <div class="pdf-resumo">
+      <div><span>${r.carros}</span><small>carros do convênio</small></div>
+      <div><span>${r.pico}</span><small>pico simultâneo${r.momentoPico ? ' (' + r.momentoPico + ')' : ''}</small></div>
+      <div><span>${r.extras}</span><small>carros extras</small></div>
+      <div class="tot"><span>${brl(r.total)}</span><small>total do dia</small></div>
+    </div>
+    <table class="pdf-tab conta"><tbody>
+      <tr><td>Valor do dia (até ${r.cfg.vagas} vagas simultâneas, das ${esc(r.cfg.inicio || c.inicio)} às ${esc(r.cfg.fechamento || c.fechamento)})</td><td>${brl(r.valorDia)}</td></tr>
+      <tr><td>Carros extras: ${r.extras} × ${brl(r.cfg.valorExtra)}${(r.momentosExtra || []).length ? ` (passou das ${r.cfg.vagas} vagas às ${r.momentosExtra.join(', ')})` : ''}</td><td>${brl(r.valorExtras)}</td></tr>
+      <tr class="t"><td>Total a pagar</td><td>${brl(r.total)}</td></tr>
+    </tbody></table>
+    <h4>Carros simultâneos por hora</h4>
+    <div class="pdf-horas">${r.horas.map((h) => `<div class="${h.max > r.cfg.vagas ? 'acima' : ''}"><b>${h.max}</b><i style="height:${(h.max / maxH) * 100}%"></i><small>${h.rotulo}</small></div>`).join('')}<em style="bottom:calc(${(r.cfg.vagas / maxH) * 100}% * .78 + 1.1rem)"><span>${r.cfg.vagas} vagas</span></em></div>
+    <h4>Carros do convênio (${cv.carros.length})</h4>
+    <table class="pdf-tab"><thead><tr><th>#</th><th>Placa</th><th>Entrada</th><th>Saída</th><th>Permanência</th><th>Ticket</th><th></th></tr></thead><tbody>
+    ${[...cv.carros].sort((a, b) => a.e - b.e).map((x, i) => `<tr class="${extra.has(x.placa) ? 'ext' : ''}"><td>${i + 1}</td><td><b>${esc(x.placa)}</b></td><td>${V.fmtHora(x.e)}</td><td>${x.s == null ? '—' : V.fmtHora(Math.min(x.s, 1439))}</td><td>${perm(x)}</td><td>${esc(x.ticket || '')}</td><td>${extra.has(x.placa) ? 'extra' : ''}</td></tr>`).join('')}
+    </tbody></table>
+    <p class="pdf-nota">Gerado em ${dataBR(hojeISO())} a partir do relatório do sistema de estacionamento${cv.arquivo ? ` (${esc(cv.arquivo)})` : ''}. Extras: cada vez que um carro entra com as ${r.cfg.vagas} vagas já ocupadas, dentro do período, conta 1 extra.</p>
+  </section>`;
+}
+
+async function telaConvPdf(ref) {
+  const ehMes = /^\d{4}-\d{2}$/.test(ref);
+  const mk = ehMes ? ref : mkDe(ref), M = await mes(mk);
+  const dias = Object.entries(M.dias).filter(([dd, d]) => d.convSab && (ehMes || `${mk}-${dd}` === ref)).sort();
+  const c = cfgConv();
+  if (!dias.length) { $app.innerHTML = moldura('<div class="card">Sem cálculo do convênio para este período.</div>'); return; }
+  const tot = dias.reduce((a, [, d]) => a + d.convSab.res.total, 0);
+  const capa = ehMes ? `<section class="pdf-pag">
+    <header class="pdf-cab"><div><b>ANITA PARKING ESTACIONAMENTO LTDA.</b><small>CNPJ 29.215.496/0001-00 · Porto Alegre/RS</small></div><div class="pdf-tit">Convênio ${esc(c.nome)}<small>Fechamento de ${nomeMes(mk)}</small></div></header>
+    <table class="pdf-tab"><thead><tr><th>Data</th><th>Dia</th><th>Carros</th><th>Pico</th><th>Extras</th><th>Valor do dia</th><th>Extras R$</th><th>Total</th></tr></thead><tbody>
+    ${dias.map(([dd, d]) => { const r = d.convSab.res, iso = `${mk}-${dd}`; return `<tr><td>${dataBR(iso)}</td><td>${C.ehSabado(iso) ? 'sábado' : 'feriado'}</td><td>${r.carros}</td><td>${r.pico}</td><td>${r.extras}</td><td>${brl(r.valorDia)}</td><td>${brl(r.valorExtras)}</td><td><b>${brl(r.total)}</b></td></tr>`; }).join('')}
+    <tr class="t"><td colspan="7">Total a pagar em ${nomeMes(mk)}</td><td>${brl(tot)}</td></tr></tbody></table>
+    <p class="pdf-nota">Detalhamento de cada dia nas páginas seguintes.</p></section>` : '';
+  const voltar = ehMes ? `#/mes/${mk}` : `#/hoje/${ref}`;
+  $app.innerHTML = `<div class="pdf-barra naoimprime"><a class="btn" href="${voltar}">‹ Voltar</a><button class="btn grande-inline" data-act="imprimir">🖨️ Imprimir / salvar PDF</button></div>
+    <p class="mini centro naoimprime">No celular: toque em "Imprimir / salvar PDF" e escolha <b>Salvar como PDF</b> (ou compartilhe direto pelo WhatsApp/e-mail).</p>
+    <div class="pdf">${capa}${dias.map(([dd, d]) => folhaConvDia(`${mk}-${dd}`, d)).join('')}</div>`;
+  document.title = `Convênio ${c.nome} ${ehMes ? nomeMes(mk) : dataBR(ref).replace(/\//g, '-')}`;
+  window.scrollTo(0, 0);
 }
 
 // grava o resultado do convênio num dia e lança o total em "Convênios" do caixa
@@ -582,7 +634,7 @@ async function telaMes(mk) {
       <table class="tab"><thead><tr><th>Dia</th><th>Carros</th><th>Pico</th><th>Extras</th><th>Total</th></tr></thead><tbody>
       ${dias.map((l) => { const r = l.dia.convSab.res; return `<tr data-href="#/hoje/${l.iso}"><td>${C.pad(l.d)} <small>${C.ehSabado(l.iso) ? 'sáb' : 'feriado'}</small></td><td>${r.carros}</td><td>${r.pico}</td><td class="${r.extras ? 'neg' : ''}">${r.extras}</td><td>${brl(r.total)}</td></tr>`; }).join('')}
       </tbody></table>
-      <button class="btn link" data-act="convCopiar">Copiar resumo para enviar</button></section>`;
+      <div class="linha"><a class="btn pdfbtn" href="#/convpdf/${mk}">📄 PDF do mês para o parceiro</a><button class="btn link" data-act="convCopiar">Copiar resumo</button></div></section>`;
   })()}
 
   ${(() => {

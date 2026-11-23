@@ -125,12 +125,14 @@ export function calcular(carros, cfgConv) {
     .map((x) => ({ ...x, eP: Math.max(x.e, ini), sP: Math.min(x.sAj, fecha) }))
     .filter((x) => x.sP > x.eP).sort((a, b) => a.eP - b.eP || a.sP - b.sP);
   const fora = carros.length - lista.length;
-  if (!lista.length) return { carros: 0, fora, horas: [], pico: 0, momentoPico: '', momentosExtra: [], extras: 0, valorDia: r2(c.valorDia), valorExtras: 0, total: r2(c.valorDia), regra: c.regra, semSaida: 0, cfg: { valorDia: c.valorDia, vagas: c.vagas, valorExtra: c.valorExtra, regra: c.regra, inicio: c.inicio, fechamento: c.fechamento } };
+  if (!lista.length) return { carros: 0, fora, horas: [], pico: 0, momentoPico: '', momentosExtra: [], placasExtra: [], extras: 0, valorDia: r2(c.valorDia), valorExtras: 0, total: r2(c.valorDia), regra: c.regra, semSaida: 0, cfg: { valorDia: c.valorDia, vagas: c.vagas, valorExtra: c.valorExtra, regra: c.regra, inicio: c.inicio, fechamento: c.fechamento } };
   const ocup = (t) => lista.filter((x) => x.eP <= t && x.sP > t).length;
   // por período: percorre as entradas; cada carro que entra com as vagas já cheias é 1 extra (contado uma vez)
   let extrasPeriodo = Math.max(0, ocup(ini) - c.vagas); // quem já estava além das vagas na abertura do período
   const momentos = [];
-  for (const x of lista) if (x.eP > ini && ocup(x.eP) > c.vagas) { extrasPeriodo++; momentos.push(hm(x.eP)); }
+  const placasExtra = [];
+  { const naAbertura = lista.filter((x) => x.eP <= ini && x.sP > ini).sort((a, b) => a.e - b.e); naAbertura.slice(c.vagas).forEach((x) => placasExtra.push(x.placa)); }
+  for (const x of lista) if (x.eP > ini && ocup(x.eP) > c.vagas) { extrasPeriodo++; momentos.push(hm(x.eP)); placasExtra.push(x.placa); }
   const hIni = Math.floor(ini / 60), hFim = Math.floor((fecha - 0.001) / 60);
   const horas = [];
   for (let h = hIni; h <= hFim; h++) {
@@ -143,7 +145,7 @@ export function calcular(carros, cfgConv) {
   const extras = c.regra === 'pico' ? Math.max(0, pico - c.vagas) : c.regra === 'hora' ? horas.reduce((a, x) => a + x.extras, 0) : extrasPeriodo;
   let best = { t: lista[0].eP, n: 0 }; for (const x of lista) { const n = ocup(x.eP); if (n > best.n) best = { t: x.eP, n }; }
   return {
-    carros: lista.length, fora, horas, pico, momentoPico: hm(best.t), extras, momentosExtra: c.regra === 'periodo' ? momentos : [], regra: c.regra,
+    carros: lista.length, fora, horas, pico, momentoPico: hm(best.t), extras, momentosExtra: c.regra === 'periodo' ? momentos : [], placasExtra: c.regra === 'periodo' ? placasExtra : [], regra: c.regra,
     valorDia: r2(c.valorDia), valorExtras: r2(extras * c.valorExtra), total: r2(c.valorDia + extras * c.valorExtra),
     semSaida: lista.filter((x) => x.semSaida).length, cfg: { valorDia: c.valorDia, vagas: c.vagas, valorExtra: c.valorExtra, regra: c.regra, inicio: c.inicio, fechamento: c.fechamento },
   };
