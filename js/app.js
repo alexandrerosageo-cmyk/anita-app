@@ -5,7 +5,7 @@ import * as V from './convenio.js';
 import { EMAIL_BACKUP } from './firebase-config.js';
 import { criarStore, salvarConfigFirebase, interpretarConfig, lerConfigFirebase, usarFirebasePadrao } from './store.js';
 
-const VERSAO = '2.15.1';
+const VERSAO = '2.16.0';
 const $app = document.getElementById('app');
 const S = { store: null, cfg: null, funcs: [], frota: [], meses: {}, tipoSel: 'paga', salvando: 0 };
 
@@ -1129,7 +1129,7 @@ async function telaSulgasPdf(ref) {
       <table class="pdf-tab"><thead><tr><th>Placa</th><th>Motorista / usuário</th><th style="text-align:right">Lavagens</th></tr></thead><tbody>
       ${Object.entries(porPlaca).sort((a, b) => b[1].n - a[1].n || a[0].localeCompare(b[0])).map(([pl, x]) => `<tr><td><b>${esc(pl)}</b></td><td>${esc(x.mot)}</td><td style="text-align:right">${x.n}</td></tr>`).join('')}
       </tbody></table>
-      <div class="assin pdf-assin um"><span><b>Alexandre Rosa</b><br>Responsável · Anita Parking Estacionamento</span></div>
+      <div class="pdf-assinatura">${S.cfg.assinatura ? `<img src="${S.cfg.assinatura}" alt="">` : '<div class="espaco"></div>'}<span><b>${esc(S.cfg.assinaturaNome || 'Alexandre Rosa')}</b><br>Responsável · Anita Parking Estacionamento</span></div>
       <p class="pdf-nota">${fech ? `Fechamento emitido em ${dataBR(fech.gerado.slice(0, 10))}. ` : `Gerado em ${dataBR(hojeISO())}. `}${fech || ref === 'aberto' ? 'Período: da impressão anterior até esta impressão.' : 'Período de faturamento do dia 19 ao dia 18 (planilha).'}</p>
     </section></div>`;
   document.title = `Lavagens Sulgás ${dataBR(per.ini).replace(/\//g, '-')} a ${dataBR(per.fim).replace(/\//g, '-')}`;
@@ -1269,6 +1269,13 @@ async function telaAjustes() {
     <button class="btn link" data-act="addFixa">+ Nova despesa fixa</button>
   </section>
 
+  <section class="card"><h3>Assinatura nos relatórios</h3>
+    ${c.assinatura ? `<div class="assin-prev"><img src="${c.assinatura}" alt="assinatura"><small>${esc(c.assinaturaNome || 'Alexandre Rosa')} · Responsável</small></div>` : '<p class="mini">Nenhuma assinatura cadastrada.</p>'}
+    <label>Nome abaixo da assinatura<input data-assin-nome value="${esc(c.assinaturaNome || 'Alexandre Rosa')}"></label>
+    <div class="linha"><label class="btn arquivo">${c.assinatura ? 'Trocar imagem' : 'Enviar imagem da assinatura'}<input type="file" id="assinArq" accept="image/*" hidden></label>${c.assinatura ? '<button class="btn link perigo" data-act="assinRemover">remover</button>' : ''}</div>
+    <p class="mini">Foto ou desenho da assinatura em fundo branco. O app limpa o fundo e recorta. Fica guardada só no seu Firebase (não vai para o GitHub) e aparece no PDF da Sulgás.</p>
+  </section>
+
   <section class="card"><h3>Backup em Excel</h3>
     <p class="mini">Planilha completa: resumo mensal, caixa diário, lavagens, mensalistas, despesas, folha, funcionários e Sulgás.</p>
     <div class="linha"><button class="btn" data-act="excelBaixar">⬇️ Baixar Excel</button><button class="btn" data-act="excelEnviar">✉️ Enviar por e-mail</button></div>
@@ -1328,6 +1335,32 @@ async function importar(file) {
     }
     await carregarBase(); toast('Histórico importado!'); status('Salvo ✓'); location.hash = '#/mes/' + mkDe(hojeISO()); rotear();
   } catch (e) { toast('Falha ao importar: ' + e.message, true); }
+}
+
+// assinatura: fundo branco vira transparente, traço engrossado, recorte e altura fixa
+async function processarAssinatura(file) {
+  const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error('Imagem inválida')); i.src = URL.createObjectURL(file); });
+  const k = Math.min(1, 1000 / Math.max(img.width, img.height));
+  const W = Math.round(img.width * k), H = Math.round(img.height * k);
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+  const cx = cv.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, W, H); cx.drawImage(img, 0, 0, W, H);
+  const px = cx.getImageData(0, 0, W, H).data;
+  const a = new Uint8ClampedArray(W * H);
+  for (let i = 0; i < W * H; i++) { const lum = 0.299 * px[i * 4] + 0.587 * px[i * 4 + 1] + 0.114 * px[i * 4 + 2]; const v = 255 - lum; a[i] = v < 50 ? 0 : Math.min(255, (v - 50) * 2.5); }
+  const g = new Uint8ClampedArray(W * H); // engrossa (máximo 3×3)
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { let m = 0; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const yy = y + dy, xx = x + dx; if (yy >= 0 && yy < H && xx >= 0 && xx < W && a[yy * W + xx] > m) m = a[yy * W + xx]; } g[y * W + x] = m; }
+  let x0 = W, y0 = H, x1 = -1, y1 = -1;
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (g[y * W + x] > 90) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+  if (x1 < 0) throw new Error('Não encontrei a assinatura na imagem');
+  const cw = x1 - x0 + 1, ch = y1 - y0 + 1;
+  const tmp = document.createElement('canvas'); tmp.width = cw; tmp.height = ch;
+  const tc = tmp.getContext('2d'), out = tc.createImageData(cw, ch);
+  for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) { const o = (y * cw + x) * 4; out.data[o] = 17; out.data[o + 1] = 24; out.data[o + 2] = 39; out.data[o + 3] = g[(y + y0) * W + x + x0]; }
+  tc.putImageData(out, 0, 0);
+  const fh = 200, fw = Math.round(cw * fh / ch);
+  const fin = document.createElement('canvas'); fin.width = fw; fin.height = fh;
+  const fc = fin.getContext('2d'); fc.imageSmoothingQuality = 'high'; fc.drawImage(tmp, 0, 0, fw, fh);
+  return fin.toDataURL('image/png');
 }
 
 async function gerarExcel() {
@@ -1477,6 +1510,7 @@ $app.addEventListener('click', async (ev) => {
     case 'excluirFunc': { const f = S.funcs.find((x) => x.id === el.dataset.id); if (!confirm(`Excluir ${f.nome} do cadastro? O histórico de folhas e presenças continua guardado.`)) break; await S.store.del('funcionarios', f.id); S.funcs = S.funcs.filter((x) => x !== f); telaEquipe(S.ctxEquipe); break; }
     case 'delFolha': { const M = S.meses[S.ctxEquipe]; M.folha[el.dataset.id][el.dataset.k].splice(+el.dataset.i, 1); salvarMes(S.ctxEquipe); telaEquipe(S.ctxEquipe); break; }
     case 'imprimir': window.print(); break;
+    case 'assinRemover': if (confirm('Remover a assinatura dos relatórios?')) { delete S.cfg.assinatura; await salvarCfg(); telaAjustes(); } break;
     case 'salvarDia': {
       const mk = ctx.mk, b = el; b.disabled = true; b.textContent = 'Salvando…';
       // campos com texto ainda não confirmado (ex.: observação sendo digitada)
@@ -1622,6 +1656,8 @@ $app.addEventListener('change', async (ev) => {
   if (['detNome', 'detValor', 'detObs', 'placaSul', 'motSul', 'modSul', 'ticketSul', 'motPadrao', 'cortNome'].includes(el.id)) return;
   if (el.dataset.act === 'irData' && el.value) { location.hash = '#/hoje/' + el.value; return; }
   if (el.dataset.act === 'feriado') { const d = diaAtual(); if (el.checked) d.feriado = true; else delete d.feriado; salvarMes(S.ctxDia.mk); telaDia(S.ctxDia.iso); return; }
+  if (el.id === 'assinArq' && el.files[0]) { try { S.cfg.assinatura = await processarAssinatura(el.files[0]); await salvarCfg(); toast('Assinatura salva'); telaAjustes(); } catch (e) { toast(e.message, true); } return; }
+  if (el.dataset.assinNome != null) { S.cfg.assinaturaNome = el.value.trim() || 'Alexandre Rosa'; await salvarCfg(); status('Salvo ✓'); return; }
   if (el.id === 'convArq' && el.files[0]) { const f = el.files[0]; try { await processarConvenio(await V.lerArquivo(f.name, await f.arrayBuffer()), f.name); } catch (e) { toast(e.message, true); } return; }
   if (el.dataset.conv) { const c = S.cfg.convSab = { ...(S.cfg.convSab || {}), ...cfgConv(), regraRevista: true }; const k = el.dataset.conv; c[k] = ['valorDia', 'vagas', 'valorExtra'].includes(k) ? num(el.value) : el.value; await salvarCfg(); status('Salvo ✓'); return; }
   if (el.dataset.pg && S.ctxDia) {
