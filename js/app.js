@@ -5,7 +5,7 @@ import * as V from './convenio.js';
 import { EMAIL_BACKUP } from './firebase-config.js';
 import { criarStore, salvarConfigFirebase, interpretarConfig, lerConfigFirebase, usarFirebasePadrao } from './store.js';
 
-const VERSAO = '2.13.0';
+const VERSAO = '2.15.0';
 const $app = document.getElementById('app');
 const S = { store: null, cfg: null, funcs: [], frota: [], meses: {}, tipoSel: 'paga', salvando: 0 };
 
@@ -256,9 +256,10 @@ async function rotear() {
     else if (rota === 'mes') await telaMes(a || mkDe(hojeISO()));
     else if (rota === 'equipe') await telaEquipe(a || mkDe(hojeISO()));
     else if (rota === 'demo') await telaDemo(a, b);
-    else if (rota === 'sulgas') await telaSulgas(a || hojeISO());
+    else if (rota === 'sulgas') { if (a) await telaSulgas(a); else await telaSulgasAberto(); }
     else if (rota === 'despesas') await telaDespesas(a || mkDe(hojeISO()));
     else if (rota === 'convpdf') await telaConvPdf(a);
+    else if (rota === 'sulgaspdf') await telaSulgasPdf(a || 'aberto');
     else if (rota === 'analise') await telaAnalise(a || 'mes', b || `${mkDe(hojeISO())}-01`);
     else if (rota === 'ajustes') await telaAjustes();
     else location.hash = '#/hoje';
@@ -346,7 +347,7 @@ async function telaDia(iso) {
       <p class="mini">Escreva o nome e toque no serviço feito.</p>` : ''}
       ${tabelaPrecos()}
       ${S.tipoSel === 'paga' ? `<div class="linha"><input id="outroValor" inputmode="decimal" placeholder="Outro valor (com desconto)"><button class="btn" data-act="addOutro">+ Adicionar</button></div>` : `<p class="mini">${S.tipoSel === 'cortesia' ? 'Cortesia conta como carro, mas entra com valor zero.' : 'Retorno (refeito por reclamação) não conta para meta nem para a base.'}</p>`}`}
-    ${lav.length ? `<ol class="lavs">${lav.map((l, i) => `<li class="t-${l.t}"><span>${C.TIPOS[l.t].nome}${l.ticket ? ' · tk ' + esc(l.ticket) : ''}${l.placa ? ' · ' + esc(l.placa) : ''}${l.t === 'sulgas' && (l.mot || motoristaDe(l.placa)) ? ' · <b class="mot">' + esc(l.mot || motoristaDe(l.placa)) + '</b>' : ''}${l.cliente ? ' · <b class="mot">' + esc(l.cliente) + '</b>' : ''}${l.desc ? ' · ' + esc(l.desc) : ''}</span><b>${l.t === 'paga' || l.t === 'sulgas' ? brl(l.v) : '—'}</b>${l.t === 'sulgas' ? `<button class="x" data-act="editSul" data-i="${i}" aria-label="editar">✎</button>` : l.t === 'cortesia' ? `<button class="x" data-act="editCort" data-i="${i}" aria-label="editar">✎</button>` : ''}<button class="x" data-act="delLav" data-i="${i}" aria-label="remover">✕</button></li>`).join('')}</ol>` : (legadoAgregado ? '' : '<p class="vazio">Nenhuma lavagem lançada neste dia.</p>')}
+    ${lav.length ? `<ol class="lavs">${lav.map((l, i) => `<li class="t-${l.t}"><span>${C.TIPOS[l.t].nome}${l.fat ? ' <span class="tag">cobrada</span>' : ''}${l.ticket ? ' · tk ' + esc(l.ticket) : ''}${l.placa ? ' · ' + esc(l.placa) : ''}${l.t === 'sulgas' && (l.mot || motoristaDe(l.placa)) ? ' · <b class="mot">' + esc(l.mot || motoristaDe(l.placa)) + '</b>' : ''}${l.cliente ? ' · <b class="mot">' + esc(l.cliente) + '</b>' : ''}${l.desc ? ' · ' + esc(l.desc) : ''}</span><b>${l.t === 'paga' || l.t === 'sulgas' ? brl(l.v) : '—'}</b>${l.t === 'sulgas' ? `<button class="x" data-act="editSul" data-i="${i}" aria-label="editar">✎</button>` : l.t === 'cortesia' ? `<button class="x" data-act="editCort" data-i="${i}" aria-label="editar">✎</button>` : ''}<button class="x" data-act="delLav" data-i="${i}" aria-label="remover">✕</button></li>`).join('')}</ol>` : (legadoAgregado ? '' : '<p class="vazio">Nenhuma lavagem lançada neste dia.</p>')}
   </section>
 
   <section class="card">
@@ -1059,43 +1060,140 @@ function aprenderCadastros(d) {
 }
 
 // ---------- TELA: Sulgás ----------
-async function telaSulgas(iso) {
+async function lavagensSulgas(iso) {
   const per = C.periodoSulgas(iso);
   const mks = [...new Set([mkDe(per.ini), mkDe(per.fim)])];
   for (const mk of mks) await mes(mk);
   const itens = [];
   for (const mk of mks) {
     const M = S.meses[mk];
-    for (const s of M.sulgasLista || []) if (s.data >= per.ini && s.data <= per.fim) itens.push({ ...s, origem: 'planilha' });
+    for (const s of M.sulgasLista || []) if (s.data >= per.ini && s.data <= per.fim) itens.push({ ...s, ticket: String(s.ticket || '').replace(/\.0+$/, ''), origem: 'planilha' });
     for (const [dd, dia] of Object.entries(M.dias)) {
       const di = `${mk}-${dd}`; if (di < per.ini || di > per.fim) continue;
       (dia.lav || []).forEach((l) => { if (l.t === 'sulgas') itens.push({ data: di, placa: l.placa || '', nome: l.mot || '', valor: l.v, ticket: l.ticket || '' }); });
       if (dia.sulgas && !(M.sulgasLista || []).some((s) => s.data === di)) for (let i = 0; i < dia.sulgas; i++) itens.push({ data: di, placa: '(sem placa)', valor: S.cfg.sulgasValor });
     }
   }
-  itens.sort((a, b) => a.data.localeCompare(b.data));
-  const nomeDe = (pl) => { const v = veiculo(pl); return v ? `${v.nome || ''} ${v.modelo ? '· ' + v.modelo : ''}` : ''; };
-  const total = itens.reduce((a, b) => a + (Number(b.valor) || 0), 0);
-  const corpo = `
-  <div class="navdata"><a class="btn ic" href="#/sulgas/${somaDias(per.ini, -1)}">‹</a><b class="titmes semcap">${dataBR(per.ini).slice(0, 5)} a ${dataBR(per.fim)}</b><a class="btn ic" href="#/sulgas/${somaDias(per.fim, 1)}">›</a></div>
-  <div class="kpis"><div class="kpi"><small>Lavagens no período</small><b>${itens.length}</b></div><div class="kpi"><small>Valor a faturar</small><b>${brl(total)}</b></div></div>
-  <section class="card"><h3>Lavagens Sulgás</h3>
-    ${itens.length ? `<table class="tab"><thead><tr><th>Data</th><th>Ticket</th><th>Placa</th><th>Usuário</th><th>Valor</th></tr></thead><tbody>
-    ${itens.map((s) => `<tr data-href="#/hoje/${s.data}"><td>${dataBR(s.data).slice(0, 5)}</td><td><small>${esc(s.ticket || '—')}</small></td><td>${esc(s.placa)}</td><td><small>${esc(s.nome || nomeDe(s.placa))}</small></td><td>${brl(s.valor)}</td></tr>`).join('')}</tbody></table>` : '<p class="vazio">Nenhuma lavagem Sulgás neste período.</p>'}
-    <button class="btn link" data-act="copiarSulgas">Copiar lista para enviar</button>
-  </section>
-  <section class="card"><h3>Frota Sulgás <small>${S.frota.length} veículos</small></h3>
+  itens.sort((a, b) => a.data.localeCompare(b.data) || String(a.ticket || '').localeCompare(String(b.ticket || '')));
+  return { per, itens };
+}
+
+// ---------- Sulgás: fechamentos (da impressão anterior até a atual) ----------
+const PRIMEIRO_INICIO_SULGAS = '2026-11-19'; // dia seguinte ao último período da planilha (19/10 a 18/11)
+async function fechamentosSulgas() {
+  if (!S.fechSul) S.fechSul = ((await S.store.get('sulgas', 'fechamentos')) || {}).lista || [];
+  return S.fechSul;
+}
+async function salvarFechamentosSulgas() { await S.store.set('sulgas', 'fechamentos', { lista: S.fechSul }); }
+// lavagens Sulgás lançadas no app ainda não incluídas em nenhum fechamento
+async function sulgasEmAberto() {
+  const fechs = await fechamentosSulgas();
+  const ini = fechs.length ? fechs[fechs.length - 1].fim : PRIMEIRO_INICIO_SULGAS;
+  const fim = hojeISO();
+  const itens = [];
+  for (const mk of A.mesesEntre(ini, fim)) {
+    const M = await mes(mk);
+    for (const [dd, dia] of Object.entries(M.dias)) {
+      const di = `${mk}-${dd}`; if (di < ini || di > fim) continue;
+      (dia.lav || []).forEach((l, i) => { if (l.t === 'sulgas' && !l.fat) itens.push({ data: di, placa: l.placa || '', nome: l.mot || motoristaDe(l.placa) || '', valor: l.v, ticket: l.ticket || '', ref: [mk, dd, i] }); });
+    }
+  }
+  itens.sort((a, b) => a.data.localeCompare(b.data) || String(a.ticket).localeCompare(String(b.ticket)));
+  return { ini, fim, itens };
+}
+
+async function telaSulgasPdf(ref) {
+  let per, itens, titulo, fech = null;
+  if (ref === 'aberto') { const ab = await sulgasEmAberto(); per = { ini: ab.ini, fim: ab.fim }; itens = ab.itens; titulo = 'PRÉVIA (período ainda não fechado)'; }
+  else if (/^f/.test(ref)) { fech = (await fechamentosSulgas()).find((f) => f.id === ref); if (!fech) { $app.innerHTML = moldura('<div class="card">Fechamento não encontrado.</div>'); return; } per = { ini: fech.ini, fim: fech.fim }; itens = fech.itens; }
+  else { ({ per, itens } = await lavagensSulgas(ref)); }
+  const mot = (s) => s.nome || motoristaDe(s.placa) || '';
+  const total = C.r2(itens.reduce((a, b) => a + (Number(b.valor) || 0), 0));
+  const porValor = {}; for (const s of itens) { const k = C.r2(s.valor).toFixed(2); porValor[k] = (porValor[k] || 0) + 1; }
+  const porPlaca = {}; for (const s of itens) { const k = s.placa || '—'; porPlaca[k] = porPlaca[k] || { n: 0, mot: mot(s) }; porPlaca[k].n++; }
+  const voltar = fech || ref === 'aberto' ? '#/sulgas' : `#/sulgas/${per.ini}`;
+  $app.innerHTML = `<div class="pdf-barra naoimprime"><a class="btn" href="${voltar}">‹ Voltar</a><button class="btn grande-inline" data-act="imprimir">🖨️ Imprimir / salvar PDF</button></div>
+    <p class="mini centro naoimprime">No celular: toque em "Imprimir / salvar PDF" e escolha <b>Salvar como PDF</b>.</p>
+    <div class="pdf"><section class="pdf-pag">
+      <header class="pdf-cab"><div><b>ANITA PARKING ESTACIONAMENTO LTDA.</b><small>CNPJ 29.215.496/0001-00 · Porto Alegre/RS</small></div><div class="pdf-tit">Lavagens Sulgás<small>Período de ${dataBR(per.ini)} a ${dataBR(per.fim)}</small>${fech ? `<small>Fechamento nº ${fech.numero}</small>` : ''}${titulo ? `<small class="previa">${titulo}</small>` : ''}</div></header>
+      <div class="pdf-resumo tres">
+        <div><span>${itens.length}</span><small>lavagens no período</small></div>
+        <div><span>${Object.keys(porPlaca).length}</span><small>veículos atendidos</small></div>
+        <div class="tot"><span>${brl(total)}</span><small>valor a faturar</small></div>
+      </div>
+      <table class="pdf-tab"><thead><tr><th>#</th><th>Data</th><th>Ticket</th><th>Placa</th><th>Motorista / usuário</th><th style="text-align:right">Valor</th></tr></thead><tbody>
+      ${itens.map((s, i) => `<tr><td>${i + 1}</td><td>${dataBR(s.data)}</td><td>${esc(s.ticket || '—')}</td><td><b>${esc(s.placa)}</b></td><td>${esc(mot(s))}</td><td style="text-align:right">${brl(s.valor)}</td></tr>`).join('')}
+      <tr class="t"><td colspan="5">Total: ${Object.entries(porValor).map(([v, n]) => `${n} × ${brl(Number(v))}`).join(' + ')}</td><td style="text-align:right">${brl(total)}</td></tr>
+      </tbody></table>
+      <h4>Resumo por veículo</h4>
+      <table class="pdf-tab"><thead><tr><th>Placa</th><th>Motorista / usuário</th><th style="text-align:right">Lavagens</th></tr></thead><tbody>
+      ${Object.entries(porPlaca).sort((a, b) => b[1].n - a[1].n || a[0].localeCompare(b[0])).map(([pl, x]) => `<tr><td><b>${esc(pl)}</b></td><td>${esc(x.mot)}</td><td style="text-align:right">${x.n}</td></tr>`).join('')}
+      </tbody></table>
+      <div class="assin pdf-assin"><span>Anita Parking Estacionamento</span><span>Sulgás · conferido por</span></div>
+      <p class="pdf-nota">${fech ? `Fechamento emitido em ${dataBR(fech.gerado.slice(0, 10))}. ` : `Gerado em ${dataBR(hojeISO())}. `}${fech || ref === 'aberto' ? 'Período: da impressão anterior até esta impressão.' : 'Período de faturamento do dia 19 ao dia 18 (planilha).'}</p>
+    </section></div>`;
+  document.title = `Lavagens Sulgás ${dataBR(per.ini).replace(/\//g, '-')} a ${dataBR(per.fim).replace(/\//g, '-')}`;
+  window.scrollTo(0, 0);
+}
+
+function blocoFrota() {
+  return `<section class="card"><h3>Frota Sulgás <small>${S.frota.length} veículos</small></h3>
     <details><summary>Ver / editar frota</summary>
     <table class="tab"><tbody>${S.frota.map((v, i) => `<tr><td>${esc(v.placa)}</td><td><small>${esc(v.modelo || '')}</small></td><td><small>${esc(v.nome || '')}</small></td><td><button class="x" data-act="delVeic" data-i="${i}">✕</button></td></tr>`).join('')}</tbody></table>
     <form class="linha" id="fVeic"><input name="placa" placeholder="Placa" required autocapitalize="characters" style="max-width:6.5rem"><input name="modelo" placeholder="Modelo" style="max-width:6rem"><input name="nome" placeholder="Usuário"><button class="btn">+</button></form>
     </details></section>`;
+}
+function ligarFormFrota(depois) {
+  const f = document.getElementById('fVeic'); if (!f) return;
+  f.onsubmit = async (ev) => {
+    ev.preventDefault(); const fd = new FormData(f);
+    S.frota.push({ placa: fd.get('placa').toUpperCase().trim(), modelo: fd.get('modelo').trim(), nome: fd.get('nome').trim() });
+    await salvarFrota(); depois();
+  };
+}
+
+async function telaSulgasAberto() {
+  const { ini, fim, itens } = await sulgasEmAberto();
+  const fechs = await fechamentosSulgas();
+  const total = C.r2(itens.reduce((a, b) => a + (Number(b.valor) || 0), 0));
+  const corpo = `
+  <div class="kpis"><div class="kpi"><small>Em aberto desde ${dataBR(ini).slice(0, 5)}</small><b>${itens.length} lavagens</b></div><div class="kpi"><small>Valor a faturar</small><b>${brl(total)}</b></div></div>
+  <section class="card"><h3>Período em aberto <small>${dataBR(ini)} a hoje</small></h3>
+    ${itens.length ? `<table class="tab"><thead><tr><th>Data</th><th>Ticket</th><th>Placa</th><th>Usuário</th><th>Valor</th></tr></thead><tbody>
+    ${itens.map((x) => `<tr data-href="#/hoje/${x.data}"><td>${dataBR(x.data).slice(0, 5)}</td><td><small>${esc(x.ticket || '—')}</small></td><td>${esc(x.placa)}</td><td><small>${esc(x.nome)}</small></td><td>${brl(x.valor)}</td></tr>`).join('')}</tbody></table>
+    <div class="linha"><button class="btn pdfbtn" data-act="fecharSulgas">📄 Fechar período e gerar PDF</button><a class="btn link" href="#/sulgaspdf/aberto">ver prévia</a><button class="btn link" data-act="copiarSulgasAberto">copiar lista</button></div>
+    <p class="mini">Ao fechar, estas ${itens.length} lavagens ficam marcadas como cobradas e o próximo período começa a partir de hoje.</p>`
+    : '<p class="vazio">Nenhuma lavagem Sulgás em aberto.</p>'}
+  </section>
+  <section class="card"><h3>Fechamentos anteriores</h3>
+    ${fechs.length ? `<table class="tab"><thead><tr><th>Nº</th><th>Período</th><th>Lavagens</th><th>Total</th><th></th></tr></thead><tbody>
+    ${[...fechs].reverse().map((f, i) => `<tr><td>${f.numero}</td><td>${dataBR(f.ini).slice(0, 5)} a ${dataBR(f.fim).slice(0, 5)}<small>${f.fim.slice(0, 4)}</small></td><td>${f.itens.length}</td><td>${brl(f.total)}</td><td><a class="tag" href="#/sulgaspdf/${f.id}">PDF</a>${i === 0 ? ` <button class="btn link mini perigo" data-act="desfazerSulgas" data-id="${f.id}">desfazer</button>` : ''}</td></tr>`).join('')}</tbody></table>` : '<p class="mini">Nenhum fechamento ainda. O primeiro vai de 19/11/2026 (depois do último período da planilha) até a data em que você imprimir.</p>'}
+    <a class="btn link" href="#/sulgas/2026-11-18">Consultar períodos antigos da planilha (19 a 18)</a>
+  </section>
+  ${blocoFrota()}`;
+  $app.innerHTML = moldura(corpo, 'Contrato Sulgás');
+  S.ctxSul = { iso: hojeISO(), itens, per: { ini, fim } };
+  ligarFormFrota(() => telaSulgasAberto());
+}
+
+async function telaSulgas(iso) {
+  const { per, itens } = await lavagensSulgas(iso);
+  const nomeDe = (pl) => { const v = veiculo(pl); return v ? `${v.nome || ''} ${v.modelo ? '· ' + v.modelo : ''}` : ''; };
+  const total = itens.reduce((a, b) => a + (Number(b.valor) || 0), 0);
+  const corpo = `
+  <div class="navdata"><a class="btn ic" href="#/sulgas/${somaDias(per.ini, -1)}">‹</a><b class="titmes semcap">${dataBR(per.ini).slice(0, 5)} a ${dataBR(per.fim)}</b><a class="btn ic" href="#/sulgas/${somaDias(per.fim, 1)}">›</a></div>
+  <a class="hojelink" href="#/sulgas">← voltar ao período em aberto</a>
+  <p class="mini centro">Consulta pelos períodos antigos da planilha (19 a 18).</p>
+  <div class="kpis"><div class="kpi"><small>Lavagens no período</small><b>${itens.length}</b></div><div class="kpi"><small>Valor a faturar</small><b>${brl(total)}</b></div></div>
+  <section class="card"><h3>Lavagens Sulgás</h3>
+    ${itens.length ? `<table class="tab"><thead><tr><th>Data</th><th>Ticket</th><th>Placa</th><th>Usuário</th><th>Valor</th></tr></thead><tbody>
+    ${itens.map((s) => `<tr data-href="#/hoje/${s.data}"><td>${dataBR(s.data).slice(0, 5)}</td><td><small>${esc(s.ticket || '—')}</small></td><td>${esc(s.placa)}</td><td><small>${esc(s.nome || nomeDe(s.placa))}</small></td><td>${brl(s.valor)}</td></tr>`).join('')}</tbody></table>` : '<p class="vazio">Nenhuma lavagem Sulgás neste período.</p>'}
+    <div class="linha">${itens.length ? `<a class="btn pdfbtn" href="#/sulgaspdf/${per.ini}">📄 PDF para imprimir</a>` : ''}<button class="btn link" data-act="copiarSulgas">Copiar lista para enviar</button></div>
+  </section>
+  ${blocoFrota()}`;
   $app.innerHTML = moldura(corpo, 'Contrato Sulgás');
   S.ctxSul = { iso, itens, per };
-  document.getElementById('fVeic').onsubmit = async (ev) => {
-    ev.preventDefault(); const fd = new FormData(ev.target);
-    S.frota.push({ placa: fd.get('placa').toUpperCase().trim(), modelo: fd.get('modelo').trim(), nome: fd.get('nome').trim() });
-    await salvarFrota(); telaSulgas(iso);
-  };
+  ligarFormFrota(() => telaSulgas(iso));
 }
 
 // ---------- TELA: ajustes ----------
@@ -1434,7 +1532,34 @@ $app.addEventListener('click', async (ev) => {
     }
     case 'addCad': { const k = el.dataset.cad; const nome = prompt({ fornecedores: 'Nome do fornecedor:', categorias: 'Nome do tipo de despesa:', materiais: 'Nome do material:' }[k]); if (!nome || !nome.trim()) break; S.cfg[k].push({ id: k === 'categorias' ? (slug(nome) || uid()) + (S.cfg.categorias.some((c) => c.id === slug(nome)) ? uid().slice(-3) : '') : uid(), nome: nome.trim() }); S.cfg[k].sort((a, b) => a.nome.localeCompare(b.nome)); await salvarCfg(); telaDespesas(S.ctxDesp); break; }
     case 'delCad': { const k = el.dataset.cad, i = +el.dataset.i; if (!confirm(`Excluir "${S.cfg[k][i].nome}" do cadastro? Despesas já lançadas não mudam.`)) break; S.cfg[k].splice(i, 1); await salvarCfg(); telaDespesas(S.ctxDesp); break; }
-    case 'delVeic': if (confirm('Remover veículo?')) { S.frota.splice(+el.dataset.i, 1); await salvarFrota(); telaSulgas(S.ctxSul.iso); } break;
+    case 'delVeic': if (confirm('Remover veículo?')) { S.frota.splice(+el.dataset.i, 1); await salvarFrota(); rotear(); } break;
+    case 'fecharSulgas': {
+      const { ini, fim, itens } = await sulgasEmAberto();
+      if (!itens.length) break;
+      const total = C.r2(itens.reduce((a, b) => a + (Number(b.valor) || 0), 0));
+      if (!confirm(`Fechar o período de ${dataBR(ini)} a ${dataBR(fim)}: ${itens.length} lavagens, ${brl(total)}?\n\nElas ficam marcadas como cobradas e o PDF abre em seguida.`)) break;
+      const fechs = await fechamentosSulgas();
+      const f = { id: 'f' + Date.now().toString(36), numero: (fechs.length ? fechs[fechs.length - 1].numero : 0) + 1, ini, fim, gerado: new Date().toISOString(), total, itens: itens.map(({ ref, ...x }) => x) };
+      const mks = new Set();
+      for (const x of itens) { const [mk, dd, i] = x.ref; S.meses[mk].dias[dd].lav[i].fat = f.id; mks.add(mk); }
+      try {
+        for (const mk of mks) await gravarMes(mk);
+        fechs.push(f); await salvarFechamentosSulgas();
+      } catch (e) { toast('Não consegui fechar: ' + e.message, true); break; }
+      location.hash = '#/sulgaspdf/' + f.id; break;
+    }
+    case 'desfazerSulgas': {
+      const fechs = await fechamentosSulgas(); const f = fechs[fechs.length - 1];
+      if (!f || f.id !== el.dataset.id || !confirm(`Desfazer o fechamento nº ${f.numero}? As ${f.itens.length} lavagens voltam a ficar em aberto.`)) break;
+      for (const mk of A.mesesEntre(f.ini, f.fim)) { const M = await mes(mk); let mudou = false; for (const d of Object.values(M.dias)) for (const l of d.lav || []) if (l.fat === f.id) { delete l.fat; mudou = true; } if (mudou) await gravarMes(mk); }
+      fechs.pop(); await salvarFechamentosSulgas(); telaSulgasAberto(); break;
+    }
+    case 'copiarSulgasAberto': {
+      const { ini, fim, itens } = await sulgasEmAberto();
+      const txt = `Lavagens Sulgás ${dataBR(ini)} a ${dataBR(fim)}\n` + itens.map((x, i) => `${i + 1}. ${dataBR(x.data)}${x.ticket ? ' · ticket ' + x.ticket : ''} · ${x.placa}${x.nome ? ' · ' + x.nome : ''}`).join('\n') + `\nTotal: ${itens.length} lavagens = ${brl(itens.reduce((a, b) => a + (Number(b.valor) || 0), 0))}`;
+      try { await navigator.clipboard.writeText(txt); toast('Lista copiada'); } catch { prompt('Copie:', txt); }
+      break;
+    }
     case 'copiarSulgas': {
       const nomeDeSul = (pl) => motoristaDe(pl);
       const { itens, per } = S.ctxSul;

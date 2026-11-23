@@ -295,3 +295,6 @@ body:has(.salvarbar) .toast { bottom: calc(135px + env(safe-area-inset-bottom));
   .toast, .salvarbar { display: none !important; }
   * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 }
+.pdf-resumo.tres { grid-template-columns: repeat(3, 1fr); }
+.pdf-assin { margin-top: 2.5rem; }
+.pdf-tit small.previa { color: var(--erro); font-weight: 800; }

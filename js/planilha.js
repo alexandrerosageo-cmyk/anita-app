@@ -44,7 +44,7 @@ export function montarPlanilha({ cfg, funcs, frota, meses }) {
       if (d.sulgas && !(M.sulgasLista || []).some((s) => s.data === l.iso)) for (let i = 0; i < d.sulgas; i++) sulgas.push([l.iso, '', '', '', cfg.sulgasValor || 0, 'planilha (sem placa)']);
       for (const x of d.lav || []) if (x.t === 'sulgas') sulgas.push([l.iso, x.ticket || '', x.placa || '', x.mot || motorista(x.placa), x.v || 0, 'app']);
     }
-    for (const s of M.sulgasLista || []) sulgas.push([s.data, s.ticket || '', s.placa, s.nome || motorista(s.placa), s.valor, 'planilha']);
+    for (const s of M.sulgasLista || []) sulgas.push([s.data, String(s.ticket || '').replace(/\.0+$/, ''), s.placa, s.nome || motorista(s.placa), s.valor, 'planilha']);
     for (const d of M.despesasLegado || []) despesas.push([nomeMesCurto(mk), null, '(planilha)', '', d.desc, '', Number(d.valor) || 0, d.obs || '']);
     for (const d of M.despesas || []) {
       despesas.push([nomeMesCurto(mk), d.data || null, nomeCat(d.cat) || d.desc, d.forn || '', d.desc || '', (d.itens || []).map((i) => i.mat).join(', '), C.valorDesp(d), d.obs || '']);
