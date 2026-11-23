@@ -5,7 +5,7 @@ import * as V from './convenio.js';
 import { EMAIL_BACKUP } from './firebase-config.js';
 import { criarStore, salvarConfigFirebase, interpretarConfig, lerConfigFirebase, usarFirebasePadrao } from './store.js';
 
-const VERSAO = '2.16.1';
+const VERSAO = '2.16.2';
 const $app = document.getElementById('app');
 const S = { store: null, cfg: null, funcs: [], frota: [], meses: {}, tipoSel: 'paga', salvando: 0 };
 
@@ -133,7 +133,15 @@ async function mes(mk) {
   if (!S.meses[mk]) {
     S.meses[mk] = (await S.store.get('meses', mk)) || { dias: {} };
     if (migrarDespesasPlanilha(mk, S.meses[mk])) salvarMes(mk);
-    if (mk > C.ULTIMO_PREMIO_PLANILHA) { let mud = false; for (const fo of Object.values(S.meses[mk].folha || {})) if (fo.premioOrigem === 'planilha') { delete fo.premioManual; delete fo.premioOrigem; mud = true; } if (mud) salvarMes(mk); }
+    if (mk > C.ULTIMO_PREMIO_PLANILHA) {
+      // prêmio copiado da planilha num mês ainda aberto: volta a ser calculado pela regra
+      let mud = false; const Mx = S.meses[mk];
+      for (const [id, fo] of Object.entries(Mx.folha || {})) {
+        const leg = (Mx.folhaLegado || []).find((e) => e.id === id);
+        if (fo.premioOrigem === 'planilha' || (fo.premioManual != null && leg && leg.premio != null && Math.abs(fo.premioManual - leg.premio) < 0.01)) { delete fo.premioManual; delete fo.premioOrigem; mud = true; }
+      }
+      if (mud) salvarMes(mk);
+    }
     // Alex é pró-labore: corrige lançamentos fixos antigos que entraram como "Outros"
     let fix = false;
     for (const d of S.meses[mk].despesas || []) if (d.fixa && d.cat === 'outros' && /\balex\b/i.test(d.desc || '')) { d.cat = 'prolabore'; fix = true; }
