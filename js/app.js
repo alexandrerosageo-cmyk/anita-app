@@ -5,7 +5,7 @@ import * as V from './convenio.js';
 import { EMAIL_BACKUP } from './firebase-config.js';
 import { criarStore, salvarConfigFirebase, interpretarConfig, lerConfigFirebase, usarFirebasePadrao } from './store.js';
 
-const VERSAO = '2.16.0';
+const VERSAO = '2.16.1';
 const $app = document.getElementById('app');
 const S = { store: null, cfg: null, funcs: [], frota: [], meses: {}, tipoSel: 'paga', salvando: 0 };
 
@@ -133,6 +133,7 @@ async function mes(mk) {
   if (!S.meses[mk]) {
     S.meses[mk] = (await S.store.get('meses', mk)) || { dias: {} };
     if (migrarDespesasPlanilha(mk, S.meses[mk])) salvarMes(mk);
+    if (mk > C.ULTIMO_PREMIO_PLANILHA) { let mud = false; for (const fo of Object.values(S.meses[mk].folha || {})) if (fo.premioOrigem === 'planilha') { delete fo.premioManual; delete fo.premioOrigem; mud = true; } if (mud) salvarMes(mk); }
     // Alex é pró-labore: corrige lançamentos fixos antigos que entraram como "Outros"
     let fix = false;
     for (const d of S.meses[mk].despesas || []) if (d.fixa && d.cat === 'outros' && /\balex\b/i.test(d.desc || '')) { d.cat = 'prolabore'; fix = true; }
@@ -676,7 +677,7 @@ async function telaEquipe(mk) {
   const ap = C.apuraMes(mk, M, S.cfg, S.funcs);
   // meses da planilha abrem já editáveis: os valores importados viram o ponto de partida
   const daPlanilha = (M.folhaLegado || []).length && !M.folhaApp;
-  if (daPlanilha) prepararFolhaDaPlanilha(M);
+  if (daPlanilha) prepararFolhaDaPlanilha(M, mk);
   let folha = '';
   {
     const fm = ap.faixaMes;
@@ -806,8 +807,8 @@ async function telaEquipe(mk) {
   };
 }
 
-function prepararFolhaDaPlanilha(M) {
-  const base = C.folhaDaPlanilha(M);
+function prepararFolhaDaPlanilha(M, mk) {
+  const base = C.folhaDaPlanilha(M, mk);
   M.folha = M.folha || {};
   for (const [id, fo] of Object.entries(base)) M.folha[id] = { ...fo, ...(M.folha[id] || {}) };
   M.folhaApp = true; // passa a valer a folha do app (salva na primeira alteração)

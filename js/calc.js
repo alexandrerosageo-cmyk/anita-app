@@ -211,22 +211,25 @@ export function folhaFunc(f, pf, folha, cfg, mk) {
 
 // Despesas e resultado do mês
 // folha do mês vinda da planilha, no formato da folha do app (dias, VT, prêmio, descontos…)
-export function folhaDaPlanilha(mes) {
+// prêmio da planilha só é definitivo nos meses que a planilha fechou (até out/2026); depois disso é calculado
+export const ULTIMO_PREMIO_PLANILHA = '2026-10';
+export function folhaDaPlanilha(mes, mk) {
   const out = {};
+  const premioFechado = !mk || mk <= ULTIMO_PREMIO_PLANILHA;
   for (const e of (mes && mes.folhaLegado) || []) {
     const fo = out[e.id] = {};
     if (e.salMes) fo.salMes = e.salMes;
     if (e.diasTrab != null) fo.diasTrab = e.diasTrab;
     if (e.vtDias != null) fo.vtDias = e.vtDias;
     if (e.vtDia != null) fo.vtDia = e.vtDia;
-    if (e.premio != null) { fo.premioManual = e.premio; fo.premioOrigem = 'planilha'; }
+    if (e.premio != null && premioFechado) { fo.premioManual = e.premio; fo.premioOrigem = 'planilha'; }
     if (e.descontos) fo.descontos = [{ desc: 'Desconto (planilha)', valor: e.descontos }];
     if (e.extras) fo.extras = [{ desc: 'Extras (planilha)', valor: e.extras }];
     if (e.obs) fo.obs = e.obs;
   }
   return out;
 }
-export const folhaEfetiva = (mes) => (mes && (mes.folhaLegado || []).length && !mes.folhaApp ? { ...folhaDaPlanilha(mes), ...(mes.folha || {}) } : (mes && mes.folha) || {});
+export const folhaEfetiva = (mes, mk) => (mes && (mes.folhaLegado || []).length && !mes.folhaApp ? { ...folhaDaPlanilha(mes, mk), ...(mes.folha || {}) } : (mes && mes.folha) || {});
 
 export const valorDesp = (d) => r2(Array.isArray(d.itens) && d.itens.length ? d.itens.reduce((a, i) => a + (Number(i.valor) || 0), 0) : d.valor);
 
@@ -247,7 +250,7 @@ export function resultadoMes(ap, mes, cfg, funcs) {
     for (const f of funcs) {
       const pf = ap.porFunc[f.id];
       if (!pf || (!pf.T && !pf.F && !pf.J && !f.ativo)) continue;
-      const fo = folhaFunc(f, pf, folhaEfetiva(mes)[f.id], cfg, ap.mk);
+      const fo = folhaFunc(f, pf, folhaEfetiva(mes, ap.mk)[f.id], cfg, ap.mk);
       sal += fo.salario; vt += fo.vt; pr += fo.premio; ex += fo.extras - fo.descontos;
     }
     auto.push({ desc: 'Salários', valor: r2(sal), auto: true });
