@@ -8,7 +8,7 @@ import * as E from './escala.js';
 import { EMAIL_BACKUP } from './firebase-config.js';
 import { criarStore, salvarConfigFirebase, interpretarConfig, lerConfigFirebase, usarFirebasePadrao } from './store.js';
 
-const VERSAO = '2.22.0';
+const VERSAO = '2.22.1';
 const $app = document.getElementById('app');
 const S = { store: null, cfg: null, funcs: [], frota: [], meses: {}, tipoSel: 'paga', salvando: 0 };
 
@@ -1237,6 +1237,19 @@ async function telaEscala(mk) {
   <section class="card"><h3>Sábados do mês <small>toque no nome para marcar quem trabalha</small></h3>
     ${sabados || '<p class="mini">Sem sábados.</p>'}
     <p class="mini">Sábados no ano: ${pessoas.map((p) => `${esc(p.nome.split(' ')[0])} ${contAno[p.id] || 0}`).join(' · ')}. Quem trabalha no sábado folga na semana seguinte, no dia escolhido na ficha.</p>
+  </section>
+  <section class="card"><h3>Folgas do mês <small>registradas automaticamente na semana seguinte ao sábado trabalhado</small></h3>
+    ${(() => {
+      const [yy, mm] = mk.split('-').map(Number), ult = new Date(yy, mm, 0).getDate(), linhas = [];
+      for (let d = 1; d <= ult; d++) {
+        const iso = `${mk}-${C.pad(d)}`; if (ctx.fechados[iso]) continue;
+        const quem = pessoas.filter((p) => E.folgaAposSabado(p, iso, ctx));
+        if (!quem.length) continue;
+        const cobre = pessoas.filter((p) => !quem.includes(p) && E.diaDe(p, iso, ctx).motivo === 'cobertura').map((p) => p.nome.split(' ')[0]);
+        linhas.push(`<tr><td>${['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'][new Date(iso + 'T12:00').getDay()]} ${iso.slice(8)}/${iso.slice(5, 7)}</td><td><b>${esc(quem.map((p) => p.nome.split(' ')[0]).join(', '))}</b><small>sábado ${E.sabadoAnterior(iso).slice(8)}/${E.sabadoAnterior(iso).slice(5, 7)}</small></td><td>${cobre.length ? esc(cobre.join(', ')) : '—'}</td></tr>`);
+      }
+      return linhas.length ? `<div class="rola"><table class="tab"><thead><tr><th>Dia</th><th>Folga</th><th>Cobre</th></tr></thead><tbody>${linhas.join('')}</tbody></table></div>` : `<p class="mini">${mk < ctx.desde.slice(0, 7) ? `As folgas pelo sábado começam junto com a escala, em ${dataBR(ctx.desde)}.` : 'Nenhuma folga de sábado neste mês (marque quem trabalha nos sábados).'}</p>`;
+    })()}
   </section>
   <section class="card"><h3>Semana</h3>
     <div class="seg">${segundas.map((d) => `<button class="${d === S.semEsc ? 'on' : ''}" data-act="escSemana" data-d="${d}">${d.slice(8)}/${d.slice(5, 7)}</button>`).join('')}</div>
