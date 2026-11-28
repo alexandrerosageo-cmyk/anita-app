@@ -1,7 +1,7 @@
 // Service worker: deixa o app abrir rápido e funcionar sem internet.
 // Ao publicar uma versão nova, aumente o número abaixo.
-const CACHE = 'anita-v44';
-const ARQUIVOS = ['./', './index.html', './styles.css', './js/app.js', './js/calc.js', './js/store.js', './js/planilha.js', './js/analise.js', './js/convenio.js', './js/xlsx-mini.js', './js/firebase-config.js', './manifest.webmanifest', './icons/icon-192.png', './icons/apple-touch-icon.png'];
+const CACHE = 'anita-v45';
+const ARQUIVOS = ['./', './index.html', './styles.css', './js/app.js', './js/calc.js', './js/store.js', './js/planilha.js', './js/analise.js', './js/convenio.js', './js/cct.js', './js/xlsx-mini.js', './js/firebase-config.js', './manifest.webmanifest', './icons/icon-192.png', './icons/apple-touch-icon.png'];
 
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ARQUIVOS))); self.skipWaiting(); });
 self.addEventListener('activate', (e) => {

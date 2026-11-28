@@ -2,10 +2,11 @@ import * as C from './calc.js';
 import { montarPlanilha, nomeArquivoBackup } from './planilha.js';
 import * as A from './analise.js';
 import * as V from './convenio.js';
+import * as K from './cct.js';
 import { EMAIL_BACKUP } from './firebase-config.js';
 import { criarStore, salvarConfigFirebase, interpretarConfig, lerConfigFirebase, usarFirebasePadrao } from './store.js';
 
-const VERSAO = '2.16.2';
+const VERSAO = '2.17.0';
 const $app = document.getElementById('app');
 const S = { store: null, cfg: null, funcs: [], frota: [], meses: {}, tipoSel: 'paga', salvando: 0 };
 
@@ -265,6 +266,7 @@ async function rotear() {
     else if (rota === 'mes') await telaMes(a || mkDe(hojeISO()));
     else if (rota === 'equipe') await telaEquipe(a || mkDe(hojeISO()));
     else if (rota === 'demo') await telaDemo(a, b);
+    else if (rota === 'cct') await telaCCT();
     else if (rota === 'sulgas') { if (a) await telaSulgas(a); else await telaSulgasAberto(); }
     else if (rota === 'despesas') await telaDespesas(a || mkDe(hojeISO()));
     else if (rota === 'convpdf') await telaConvPdf(a);
@@ -281,7 +283,7 @@ function moldura(corpo, titulo) {
   const nav = [['hoje', '📝', 'Hoje'], ['mes', '📊', 'Mês'], ['analise', '📈', 'Análise'], ['equipe', '👥', 'Equipe'], ['despesas', '🧾', 'Despesas'], ['sulgas', '🚐', 'Sulgás']];
   return `<header class="topo"><div><b>Estacionamento Anita</b>${titulo ? `<small>${titulo}</small>` : ''}</div><span class="topo-dir"><span id="status" class="status">${S.store.modo === 'local' ? 'modo local' : ''}</span><a href="#/ajustes" class="engrenagem ${r === 'ajustes' ? 'ativo' : ''}" aria-label="Ajustes">⚙️</a></span></header>
   <main>${corpo}</main>
-  <nav class="nav">${nav.map(([k, i, t]) => `<a href="#/${k}" class="${r === k || (r === 'demo' && k === 'equipe') ? 'ativo' : ''}"><span>${i}</span>${t}</a>`).join('')}</nav>`;
+  <nav class="nav">${nav.map(([k, i, t]) => `<a href="#/${k}" class="${r === k || ((r === 'demo' || r === 'cct') && k === 'equipe') ? 'ativo' : ''}"><span>${i}</span>${t}</a>`).join('')}</nav>`;
 }
 
 // ---------- TELA: dia ----------
@@ -777,6 +779,7 @@ async function telaEquipe(mk) {
     </details>`;
 
   const corpo = `
+  <a class="btn link" href="#/cct">⚖️ Comparativo hoje × regra nova (CCT)</a>
   <div class="navdata"><a class="btn ic" href="#/equipe/${somaMes(mk, -1)}">‹</a><b class="titmes">${nomeMes(mk)}</b><a class="btn ic" href="#/equipe/${somaMes(mk, 1)}">›</a></div>
   ${folha}
   <section class="card">
@@ -820,6 +823,112 @@ function prepararFolhaDaPlanilha(M, mk) {
   M.folha = M.folha || {};
   for (const [id, fo] of Object.entries(base)) M.folha[id] = { ...fo, ...(M.folha[id] || {}) };
   M.folhaApp = true; // passa a valer a folha do app (salva na primeira alteração)
+}
+
+// ---------- TELA: comparativo CCT (hoje x regra nova) ----------
+async function mediasCCT(p) {
+  const atual = mkDe(hojeISO()), out = [];
+  const cfgAnt = { ...S.cfg, vigencia: '9999-12-31' }, cfgNova = { ...S.cfg, vigencia: '2000-01-01' };
+  for (let i = 1; i <= 24 && out.length < (Number(p.mesesBase) || 6); i++) {
+    const mk = somaMes(atual, -i), M = await mes(mk);
+    if (!M || !Object.keys(M.dias || {}).length) continue;
+    const a = C.apuraMes(mk, M, cfgAnt, S.funcs);
+    if (!a.tot.contados) continue;
+    const n = C.apuraMes(mk, M, cfgNova, S.funcs);
+    const leg = mk <= C.ULTIMO_PREMIO_PLANILHA && (M.folhaLegado || []).map((e) => Number(e.premio ?? e.extras) || 0).filter(Boolean);
+    out.push({ mk, contados: a.tot.contados, receita: a.tot.receita, antigo: leg && leg.length ? leg.sort((x, y) => leg.filter((v) => v === y).length - leg.filter((v) => v === x).length || x - y)[0] : a.tot.premioPessoaDia, novo: C.r2(n.tot.premioPessoaDia + ((C.faixaMes(n.tot.contados, cfgNova) || {}).valor || 0)) });
+  }
+  const med = (k) => (out.length ? C.r2(out.reduce((s, x) => s + x[k], 0) / out.length) : 0);
+  return { meses: out.reverse(), premioHoje: med('antigo'), premioNovo: med('novo'), receita: med('receita') };
+}
+
+async function telaCCT() {
+  const p = K.prm(S.cfg), hoje = hojeISO();
+  const auto = await mediasCCT(p);
+  const medias = { premioHoje: p.premioHojeManual ?? auto.premioHoje, premioNovo: p.premioNovoManual ?? auto.premioNovo, receita: p.receitaManual ?? auto.receita };
+  const funcs = S.funcs.filter((f) => f.ativo !== false).sort((a, b) => a.nome.localeCompare(b.nome));
+  const linhas = funcs.map((f) => { const pe = K.pessoa(f, p, hoje); return { pe, r: K.calcula(pe, p, medias) }; });
+  const inc = linhas.filter((l) => l.pe.incluir);
+  const tot = (fn) => C.r2(inc.reduce((a, l) => a + fn(l), 0));
+  const tH = tot((l) => l.r.hoje.total), tN = tot((l) => l.r.nova.total), dif = C.r2(tN - tH), anual = tot((l) => l.r.anual);
+  const pc = (v) => `${(v * 100).toFixed(1).replace('.', ',')}%`;
+  const inp = (id, k, v, extra = '') => `<input id="cct-${id}-${k}" data-cctp="${id}" data-k="${k}" inputmode="decimal" value="${v == null ? '' : fmtN(v)}" ${extra}>`;
+  const par = (k, rot, suf = '') => `<label>${rot}${suf ? ` <small>${suf}</small>` : ''}<input id="cct-par-${k}" data-cct="${k}" inputmode="decimal" value="${fmtN(p[k])}"></label>`;
+  const sinal = (v) => `<b class="${v > 0 ? 'neg' : v < 0 ? 'pos' : ''}">${v > 0 ? '+' : v < 0 ? '−' : ''}${brl(Math.abs(v))}</b>`;
+
+  const cards = linhas.map(({ pe, r }) => `<section class="card func ${pe.incluir ? '' : 'riscado'}" id="cct-${pe.id}">
+    <h3>${esc(pe.nome)} <small>${pe.incluir ? `diferença ${sinal(r.dif)}/mês` : 'fora da conta'}</small></h3>
+    <div class="grade-folha">
+      <label>Função<select id="cct-${pe.id}-funcao" data-cctp="${pe.id}" data-k="funcao">${K.FUNCOES.map(([v, t]) => `<option value="${v}" ${pe.funcao === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+      <label>Anos de casa${inp(pe.id, 'anos', pe.anos)}</label>
+      <div class="calc">piso CCT <b>${brl(r.piso)}</b></div>
+      <label class="chk"><input type="checkbox" id="cct-${pe.id}-caixa" data-cctp="${pe.id}" data-k="caixa" ${pe.caixa ? 'checked' : ''}> Faz caixa</label>
+      <label class="chk"><input type="checkbox" id="cct-${pe.id}-insal" data-cctp="${pe.id}" data-k="insal" ${pe.insal ? 'checked' : ''}> Insalubre</label>
+      <label class="chk"><input type="checkbox" id="cct-${pe.id}-incluir" data-cctp="${pe.id}" data-k="incluir" ${pe.incluir ? 'checked' : ''}> Incluir</label>
+      <label>Salário hoje (R$)${inp(pe.id, 'salario', pe.salario)}</label>
+      <label>VT por dia (R$)${inp(pe.id, 'vtDia', pe.vtDia)}</label>
+      <label>Dias de VT${inp(pe.id, 'vtDias', pe.vtDias)}</label>
+      <label>Prêmio hoje (R$)${inp(pe.id, 'premioHoje', pe.premioHoje, `placeholder="${fmtN(medias.premioHoje)} (média)"`)}</label>
+      <label>Prêmio regra nova (R$)${inp(pe.id, 'premioNovo', pe.premioNovo, `placeholder="${fmtN(medias.premioNovo)} (média)"`)}</label>
+      <label>VA pago hoje (R$)${inp(pe.id, 'vaHoje', pe.vaHoje)}</label>
+    </div>
+    <table class="tab"><thead><tr><th></th><th class="r">Hoje</th><th class="r">Regra nova</th></tr></thead><tbody>
+      ${K.ITENS.filter(([k]) => r.hoje[k] || r.nova[k]).map(([k, t]) => `<tr><td>${t}${k === 'premio' && p.premioCenario === 'antigo' ? ' <small>(mantém a regra antiga)</small>' : ''}</td><td class="r">${brl(r.hoje[k])}</td><td class="r">${brl(r.nova[k])}</td></tr>`).join('')}
+      <tr class="tot"><td>Total / mês</td><td class="r">${brl(r.hoje.total)}</td><td class="r">${brl(r.nova.total)}</td></tr>
+    </tbody></table>
+    ${Object.keys(pe.editado).length ? `<button class="btn link mini" data-act="cctLimpar" data-id="${pe.id}">voltar aos valores do cadastro</button>` : ''}
+  </section>`).join('');
+
+  // adoção: 13 meses a partir do mês que vem
+  const ini = somaMes(mkDe(hoje), 1); let acum = 0, ateCCT = 0;
+  const meses = Array.from({ length: 13 }, (_, i) => { const mk = somaMes(ini, i), nova = mk >= p.adocao, extra = nova ? dif : 0; acum = C.r2(acum + extra); if (mk <= '2027-01') ateCCT = acum; return { mk, nova, custo: nova ? tN : tH, extra, acum }; });
+
+  const corpo = `
+  <p><a href="#/equipe" class="btn link">‹ Equipe</a></p>
+  <section class="card"><h3>Comparativo: hoje × regra nova <small>CCT 2026/2027 + regulamento de premiação</small></h3>
+    <div class="seg"><button class="${p.premioCenario !== 'antigo' ? 'on' : ''}" data-act="cctCenario" data-v="novo">Prêmio pelo regulamento novo</button><button class="${p.premioCenario === 'antigo' ? 'on' : ''}" data-act="cctCenario" data-v="antigo">Mantendo o prêmio antigo</button></div>
+    <div class="kpis seis">
+      <div class="kpi"><small>Hoje / mês</small><b>${brl(tH)}</b></div>
+      <div class="kpi"><small>Regra nova / mês</small><b>${brl(tN)}</b></div>
+      <div class="kpi"><small>Diferença / mês</small>${sinal(dif)}<small>${tH ? pc(dif / tH) : ''}</small></div>
+      <div class="kpi"><small>Diferença / ano</small>${sinal(anual)}<small>com 13º e férias</small></div>
+      <div class="kpi"><small>Folha ÷ receita</small><b>${medias.receita ? `${pc(tH / medias.receita)} → ${pc(tN / medias.receita)}` : '—'}</b><small>receita média ${brl(medias.receita)}</small></div>
+      <div class="kpi"><small>Pessoas na conta</small><b>${inc.length}</b></div>
+    </div>
+    <div class="rola"><table class="tab"><thead><tr><th>Nome</th><th class="r">Hoje</th><th class="r">Nova</th><th class="r">Dif.</th></tr></thead><tbody>
+      ${inc.map(({ pe, r }) => `<tr data-ancora="cct-${pe.id}" class="clic"><td><b>${esc(pe.nome)}</b></td><td class="r">${brl(r.hoje.total)}</td><td class="r">${brl(r.nova.total)}</td><td class="r">${sinal(r.dif)}</td></tr>`).join('')}
+      <tr class="tot"><td>Total</td><td class="r">${brl(tH)}</td><td class="r">${brl(tN)}</td><td class="r">${sinal(dif)}</td></tr></tbody></table></div>
+    <p class="mini">Os valores vêm do cadastro de cada funcionário; o que você mudar aqui fica só neste comparativo e não altera a folha. Não inclui encargos (INSS/FGTS), horas extras nem descontos.</p>
+  </section>
+  ${cards}
+  <section class="card"><h3>Quando adotar</h3>
+    <label>Passar a pagar pela regra nova a partir de<input type="month" id="cct-par-adocao" data-cct="adocao" value="${p.adocao}"></label>
+    <p class="mini">Folha hoje ${brl(tH)} · pela regra nova ${brl(tN)} por mês.</p>
+    <p>Custo extra até jan/27 (fim da CCT atual): <b>${brl(ateCCT)}</b> · em 13 meses: <b>${brl(acum)}</b></p>
+    <div class="rola"><table class="tab"><thead><tr><th>Mês</th><th>Regra</th><th class="r">Extra no mês</th><th class="r">Acumulado</th></tr></thead><tbody>
+      ${meses.map((m) => `<tr><td>${nomeMes(m.mk).slice(0, 3)}/${m.mk.slice(2, 4)}</td><td>${m.nova ? '<span class="tag n3">nova</span>' : '<span class="tag">hoje</span>'}</td><td class="r">${m.extra ? brl(m.extra) : '—'}</td><td class="r">${brl(m.acum)}</td></tr>`).join('')}
+    </tbody></table></div>
+  </section>
+  <section class="card"><h3>Premissas</h3>
+    <div class="grade-folha">
+      ${par('minimo', 'Salário mínimo (R$)', 'insalubridade')}${par('pisoLavador', 'Piso lavador (R$)')}${par('pisoGeral', 'Piso geral (R$)')}
+      ${par('pisoSeco', 'Piso manobrista/seco (R$)')}${par('caixaPct', 'Grat. caixa (%)')}${par('insalPct', 'Insalubridade (%)')}
+      ${par('quinqPct', 'Quinquênio (%)')}${par('va', 'VA mínimo (R$)')}${par('mesesBase', 'Meses para as médias')}
+      <label>Prêmio médio hoje (R$)<input id="cct-par-premioHojeManual" data-cct="premioHojeManual" inputmode="decimal" value="${p.premioHojeManual != null ? fmtN(p.premioHojeManual) : ''}" placeholder="${fmtN(auto.premioHoje)}"></label>
+      <label>Prêmio médio regra nova (R$)<input id="cct-par-premioNovoManual" data-cct="premioNovoManual" inputmode="decimal" value="${p.premioNovoManual != null ? fmtN(p.premioNovoManual) : ''}" placeholder="${fmtN(auto.premioNovo)}"></label>
+      <label>Receita média (R$)<input id="cct-par-receitaManual" data-cct="receitaManual" inputmode="decimal" value="${p.receitaManual != null ? fmtN(p.receitaManual) : ''}" placeholder="${fmtN(auto.receita)}"></label>
+    </div>
+    <p class="mini">Médias dos últimos ${auto.meses.length} meses (prêmio antigo: o valor pago na planilha até out/26; prêmio novo: recalculado pelo regulamento) (deixe em branco para usar o automático):</p>
+    <div class="rola"><table class="tab"><thead><tr><th>Mês</th><th class="r">Carros</th><th class="r">Prêmio antigo</th><th class="r">Prêmio novo</th><th class="r">Receita</th></tr></thead><tbody>
+      ${auto.meses.map((m) => `<tr><td>${nomeMes(m.mk).slice(0, 3)}/${m.mk.slice(2, 4)}</td><td class="r">${m.contados}</td><td class="r">${brl(m.antigo)}</td><td class="r">${brl(m.novo)}</td><td class="r">${brl(m.receita)}</td></tr>`).join('')}
+      <tr class="tot"><td>Média</td><td></td><td class="r">${brl(auto.premioHoje)}</td><td class="r">${brl(auto.premioNovo)}</td><td class="r">${brl(auto.receita)}</td></tr></tbody></table></div>
+    <p class="mini">Prêmio novo = prêmios diários + bônus mensal, para quem trabalhou todos os dias.</p>
+  </section>
+  <section class="card"><details><summary><b>O que diz a convenção</b> <small>CCT 2026/2027, vigente de 01/02/2026 a 31/01/2027</small></summary>
+    <table class="tab"><tbody>${K.CLAUSULAS.map(([c, d, q]) => `<tr><td><b>${esc(c)}</b><small>${esc(d)}</small><small><i>${esc(q)}</i></small></td></tr>`).join('')}</tbody></table>
+  </details>
+  <p class="mini alerta">Atenção: a CCT já está em vigor. Pisos, VA e insalubridade (quando constatada) já são devidos por ela; adiar pode gerar passivo trabalhista. Confirme com o contador.</p></section>`;
+  $app.innerHTML = moldura(corpo, 'Comparativo CCT');
 }
 
 // ---------- TELA: demonstrativo (Regulamento 4.3) ----------
@@ -1415,6 +1524,8 @@ $app.addEventListener('click', async (ev) => {
   const ctx = S.ctxDia;
   switch (act) {
     case 'tipo': S.tipoSel = el.dataset.t; telaDia(ctx.iso); break;
+    case 'cctCenario': S.cfg.cct = { ...(S.cfg.cct || {}), premioCenario: el.dataset.v }; await salvarCfg(); telaCCT(); break;
+    case 'cctLimpar': if (S.cfg.cct && S.cfg.cct.pessoas) delete S.cfg.cct.pessoas[el.dataset.id]; await salvarCfg(); telaCCT(); break;
     case 'addLav': {
       const pr = S.cfg.precos[+el.dataset.i]; const t = S.tipoSel;
       let cliente;
@@ -1679,6 +1790,22 @@ $app.addEventListener('change', async (ev) => {
     d[k] = k === 'obs' ? el.value : (k === 'valor' ? num(el.value) : Math.round(num(el.value)));
     if (k !== 'obs') { delete d.legado; delete d.premioLeg; S.abrirPlanilha = true; if (!d[k]) delete d[k]; }
     salvarMes(S.ctxDia.mk); if (k !== 'obs') redesenhar(() => telaDia(S.ctxDia.iso)); return;
+  }
+  if (el.dataset.cct || el.dataset.cctp) {
+    const c = S.cfg.cct = S.cfg.cct || {};
+    if (el.dataset.cct) {
+      const k = el.dataset.cct;
+      if (k === 'adocao') c.adocao = el.value || K.CCT_PADRAO.adocao;
+      else if (/Manual$/.test(k)) c[k] = el.value.trim() === '' ? null : num(el.value);
+      else c[k] = num(el.value);
+    } else {
+      const pp = c.pessoas = c.pessoas || {}, e = pp[el.dataset.cctp] = pp[el.dataset.cctp] || {}, k = el.dataset.k;
+      if (el.type === 'checkbox') e[k] = el.checked;
+      else if (k === 'funcao') { e.funcao = el.value; delete e.insal; }
+      else if (el.value.trim() === '') delete e[k];
+      else e[k] = num(el.value);
+    }
+    await salvarCfg(); status('Salvo ✓'); redesenhar(() => telaCCT()); return;
   }
   if (el.dataset.folhaProx) {
     const mkP = somaMes(S.ctxEquipe, 1), Mp = await mes(mkP); Mp.folha = Mp.folha || {};
