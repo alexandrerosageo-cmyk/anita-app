@@ -3,10 +3,11 @@ import { montarPlanilha, nomeArquivoBackup } from './planilha.js';
 import * as A from './analise.js';
 import * as V from './convenio.js';
 import * as K from './cct.js';
+import * as P from './ponto.js';
 import { EMAIL_BACKUP } from './firebase-config.js';
 import { criarStore, salvarConfigFirebase, interpretarConfig, lerConfigFirebase, usarFirebasePadrao } from './store.js';
 
-const VERSAO = '2.17.1';
+const VERSAO = '2.18.0';
 const $app = document.getElementById('app');
 const S = { store: null, cfg: null, funcs: [], frota: [], meses: {}, tipoSel: 'paga', salvando: 0 };
 
@@ -167,6 +168,7 @@ async function gravarMes(mk) {
     await S.store.set('meses', mk, S.meses[mk]);
     S.pendente[mk] = false; S.salvoEm[mk] = horaAgora(); delete S.erroSalvar[mk];
     status('Salvo ✓'); atualizarBarraSalvar();
+    agendarPortal();
   } catch (e) {
     S.erroSalvar[mk] = msgErroSalvar(e); status('Erro ao salvar'); atualizarBarraSalvar(); toast(S.erroSalvar[mk], true);
     throw e;
@@ -218,6 +220,7 @@ async function carregarBase() {
   S.funcs = await S.store.list('funcionarios');
   S.frota = ((await S.store.get('frota', 'lista')) || {}).veiculos || [];
   S.meses = {};
+  S.acessos = await S.store.list('equipeAcesso').catch(() => []);
 }
 
 // ---------- inicialização ----------
@@ -227,6 +230,8 @@ async function iniciar() {
   try {
     const logado = await S.store.init();
     if (S.store.modo === 'firebase' && !logado) return telaLogin(S.store.sessaoExpirou ? 'Sua sessão expirou (a senha pode ter sido trocada). Entre de novo.' : '');
+    const perfil = await S.store.perfil();
+    if (perfil && perfil.funcId) return iniciarFuncionario(perfil);
   } catch (e) {
     $app.innerHTML = `<div class="card"><h2>Não consegui conectar ao Firebase</h2><p>${esc(e.message)}</p>
       <button class="btn" data-act="desconectar">Voltar ao modo local</button></div>`;
@@ -242,7 +247,7 @@ function telaLogin(erro) {
   $app.innerHTML = `<div class="login">
     <div class="logo">🚗💧</div><h1>Estacionamento Anita</h1>
     <form id="fLogin" class="card">
-      <label>E-mail<input type="email" name="email" autocomplete="username" required></label>
+      <label>E-mail ou usuário<input type="text" name="email" autocomplete="username" autocapitalize="none" required></label>
       <label>Senha<input type="password" name="senha" autocomplete="current-password" required></label>
       ${erro ? `<p class="erro">${esc(erro)}</p>` : ''}
       <button class="btn grande">Entrar</button>
@@ -251,7 +256,12 @@ function telaLogin(erro) {
   document.getElementById('fLogin').onsubmit = async (ev) => {
     ev.preventDefault();
     const fd = new FormData(ev.target);
-    try { await S.store.entrar(fd.get('email'), fd.get('senha')); await carregarBase(); window.addEventListener('hashchange', rotear); rotear(); }
+    try {
+      await S.store.entrar(P.emailDeUsuario(fd.get('email')), fd.get('senha'));
+      const perfil = await S.store.perfil();
+      if (perfil && perfil.funcId) return iniciarFuncionario(perfil);
+      await carregarBase(); window.addEventListener('hashchange', rotear); rotear();
+    }
     catch (e) { telaLogin('E-mail ou senha incorretos.'); }
   };
 }
@@ -267,6 +277,7 @@ async function rotear() {
     else if (rota === 'equipe') await telaEquipe(a || mkDe(hojeISO()));
     else if (rota === 'demo') await telaDemo(a, b);
     else if (rota === 'cct') await telaCCT();
+    else if (rota === 'ponto') await telaPontoEquipe(a || mkDe(hojeISO()));
     else if (rota === 'sulgas') { if (a) await telaSulgas(a); else await telaSulgasAberto(); }
     else if (rota === 'despesas') await telaDespesas(a || mkDe(hojeISO()));
     else if (rota === 'convpdf') await telaConvPdf(a);
@@ -283,7 +294,7 @@ function moldura(corpo, titulo) {
   const nav = [['hoje', '📝', 'Hoje'], ['mes', '📊', 'Mês'], ['analise', '📈', 'Análise'], ['equipe', '👥', 'Equipe'], ['despesas', '🧾', 'Despesas'], ['sulgas', '🚐', 'Sulgás']];
   return `<header class="topo"><div><b>Estacionamento Anita</b>${titulo ? `<small>${titulo}</small>` : ''}</div><span class="topo-dir"><span id="status" class="status">${S.store.modo === 'local' ? 'modo local' : ''}</span><a href="#/ajustes" class="engrenagem ${r === 'ajustes' ? 'ativo' : ''}" aria-label="Ajustes">⚙️</a></span></header>
   <main>${corpo}</main>
-  <nav class="nav">${nav.map(([k, i, t]) => `<a href="#/${k}" class="${r === k || ((r === 'demo' || r === 'cct') && k === 'equipe') ? 'ativo' : ''}"><span>${i}</span>${t}</a>`).join('')}</nav>`;
+  <nav class="nav">${nav.map(([k, i, t]) => `<a href="#/${k}" class="${r === k || ((r === 'demo' || r === 'cct' || r === 'ponto') && k === 'equipe') ? 'ativo' : ''}"><span>${i}</span>${t}</a>`).join('')}</nav>`;
 }
 
 // ---------- TELA: dia ----------
@@ -779,6 +790,7 @@ async function telaEquipe(mk) {
     </details>`;
 
   const corpo = `
+  <a class="btn link" href="#/ponto">🕒 Ponto e acesso da equipe</a>
   <a class="btn link" href="#/cct">⚖️ Comparativo hoje × regra nova (CCT)</a>
   <div class="navdata"><a class="btn ic" href="#/equipe/${somaMes(mk, -1)}">‹</a><b class="titmes">${nomeMes(mk)}</b><a class="btn ic" href="#/equipe/${somaMes(mk, 1)}">›</a></div>
   ${folha}
@@ -823,6 +835,239 @@ function prepararFolhaDaPlanilha(M, mk) {
   M.folha = M.folha || {};
   for (const [id, fo] of Object.entries(base)) M.folha[id] = { ...fo, ...(M.folha[id] || {}) };
   M.folhaApp = true; // passa a valer a folha do app (salva na primeira alteração)
+}
+
+// ---------- PONTO VIRTUAL e PORTAL DO FUNCIONÁRIO ----------
+const REGRAS_FIRESTORE = (email) => `rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // administradores: veem e alteram tudo
+    function admin() {
+      return request.auth != null && request.auth.token.email in ['${email}'];
+    }
+    function acesso() {
+      return get(/databases/$(database)/documents/equipeAcesso/$(request.auth.uid)).data;
+    }
+    // funcionário com acesso liberado, só para os próprios dados
+    function funcionario(fid) {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/equipeAcesso/$(request.auth.uid))
+        && acesso().funcId == fid;
+    }
+    match /{documento=**} {
+      allow read, write: if admin();
+    }
+    match /equipeAcesso/{uid} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+    }
+    match /config/local {
+      allow read: if request.auth != null;
+    }
+    match /portal/{fid} {
+      allow read: if funcionario(fid);
+    }
+    match /ponto/{fid}/marcas/{m} {
+      allow read: if funcionario(fid);
+      // só marca o horário de agora (do servidor), não edita nem apaga
+      allow create: if funcionario(fid)
+        && request.resource.data.ts == request.time
+        && request.resource.data.manual == false
+        && request.resource.data.tipo in ['entrada', 'almoco', 'volta', 'saida'];
+    }
+  }
+}`;
+
+async function localTrabalho() { return { ...P.LOCAL_PADRAO, ...((await S.store.get('config', 'local')) || {}) }; }
+
+function pegarPosicao() {
+  return new Promise((res, rej) => {
+    if (!navigator.geolocation) return rej(new Error('Este aparelho não informa a localização.'));
+    navigator.geolocation.getCurrentPosition(
+      (p) => res({ lat: p.coords.latitude, lng: p.coords.longitude, acc: p.coords.accuracy }),
+      (e) => rej(new Error(e.code === 1 ? 'Permita o acesso à localização para bater o ponto (nas configurações do navegador).' : 'Não consegui pegar a localização. Tente de novo ao ar livre.')),
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 });
+  });
+}
+
+// valores de cada funcionário, publicados para o app dele (mês atual e anterior)
+function valoresFunc(f, mk, M, ap, Mp) {
+  const pf = ap.porFunc[f.id] || { T: 0, F: 0, J: 0, previstos: 0, presencaPct: 0, premioDiario: 0, bonus: 0, premioTotal: 0, elegivelBonus: false };
+  const fo = (M.folha || {})[f.id] || {};
+  const r = C.folhaFunc(f, pf, fo, S.cfg, mk);
+  const mkProx = somaMes(mk, 1), vtProx = C.folhaFunc(f, null, (Mp.folha || {})[f.id], S.cfg, mkProx);
+  const prox = ap.regraNova ? (S.cfg.faixasMes || []).find((x) => x.min > ap.tot.contados) : null;
+  return {
+    salario: r.salario, diasTrab: r.diasTrab, premio: r.premio, premioDiario: C.r2(pf.premioDiario || 0), bonus: C.r2(pf.bonus || 0),
+    trabalhou: pf.T, faltas: pf.F, justificadas: pf.J, presenca: pf.previstos ? Math.round(pf.presencaPct * 100) : null,
+    extras: (r.fixos || []).filter((x) => x.ativo && x.sinal === '+').map((x) => ({ desc: x.desc, valor: x.valor })).concat((fo.extras || []).filter((e) => Number(e.valor)).map((e) => ({ desc: e.desc, valor: Number(e.valor) }))),
+    descontos: (r.fixos || []).filter((x) => x.ativo && x.sinal !== '+').map((x) => ({ desc: x.desc, valor: x.valor })).concat((fo.descontos || []).filter((e) => Number(e.valor)).map((e) => ({ desc: e.desc, valor: Number(e.valor) }))),
+    vt: r.vt, variavel: r.variavel, vtProx: vtProx.vt, pagarDia1: C.r2(r.variavel + vtProx.vt), diaPg: C.diaPagamento(mk),
+    regraNova: !!ap.regraNova, carrosEquipe: ap.tot.contados, proxMeta: prox ? { carros: prox.min, valor: prox.valor } : null,
+  };
+}
+async function publicarPortais(silencioso) {
+  if (!S.acessos) S.acessos = await S.store.list('equipeAcesso').catch(() => []);
+  if (!S.acessos.length) return 0;
+  const atual = mkDe(hojeISO()), meses = [somaMes(atual, -1), atual], dados = {};
+  for (const mk of meses) {
+    const M = await mes(mk), Mp = await mes(somaMes(mk, 1));
+    dados[mk] = { M, Mp, ap: C.apuraMes(mk, M, S.cfg, S.funcs) };
+  }
+  let n = 0;
+  for (const fid of new Set(S.acessos.map((a) => a.funcId))) {
+    const f = S.funcs.find((x) => x.id === fid); if (!f) continue;
+    const doc = { nome: f.nome, atualizado: new Date().toISOString(), meses: {} };
+    for (const mk of meses) doc.meses[mk] = valoresFunc(f, mk, dados[mk].M, dados[mk].ap, dados[mk].Mp);
+    await S.store.set('portal', fid, doc); n++;
+  }
+  if (!silencioso) toast(`Valores atualizados no app de ${n} funcionário${n === 1 ? '' : 's'}`);
+  return n;
+}
+let timerPortal = null;
+function agendarPortal() { if (!S.acessos || !S.acessos.length) return; clearTimeout(timerPortal); timerPortal = setTimeout(() => publicarPortais(true).catch(() => {}), 4000); }
+
+// ----- tela do administrador: #/ponto/AAAA-MM -----
+async function telaPontoEquipe(mk) {
+  const local = await localTrabalho();
+  S.acessos = await S.store.list('equipeAcesso').catch(() => []);
+  const funcs = S.funcs.filter((f) => f.ativo !== false).sort((a, b) => a.nome.localeCompare(b.nome));
+  const [y, m] = mk.split('-').map(Number), ultimo = new Date(y, m, 0).getDate();
+  const blocos = [];
+  for (const f of funcs) {
+    const marcas = await S.store.listPonto(f.id, `${mk}-01`, `${mk}-${ultimo}`).catch(() => []);
+    const dias = P.porDia(marcas), total = dias.reduce((a, d) => a + d.minutos, 0);
+    const cel = (d, k) => { const x = d.por[k]; return x ? `<span class="${x.ok === false ? 'neg' : ''}" title="${x.manual ? 'lançado pelo administrador' : x.dist != null ? `${x.dist} m do local` : ''}">${P.horaDe(x.ts)}${x.manual ? '*' : x.ok === false ? '⚠' : ''}</span>` : '—'; };
+    blocos.push(`<section class="card" id="pt-${f.id}"><h3>${esc(f.nome)} <small>${dias.length} dias · ${P.fmtHoras(total)}</small></h3>
+      ${dias.length ? `<div class="rola"><table class="tab"><thead><tr><th>Dia</th><th>Entr.</th><th>Alm.</th><th>Volta</th><th>Saída</th><th class="r">Horas</th></tr></thead><tbody>
+      ${dias.map((d) => `<tr><td>${dataBR(d.dia).slice(0, 5)}</td>${P.TIPOS.map(([k]) => `<td>${cel(d, k)}</td>`).join('')}<td class="r">${P.fmtHoras(d.minutos)}</td></tr>`).join('')}
+      </tbody></table></div>
+      <details><summary class="mini">Corrigir marcações</summary>
+        ${dias.map((d) => d.marcas.map((x) => `<div class="item-folha"><span>${dataBR(d.dia).slice(0, 5)}</span><span class="fixo-desc">${P.horaDe(x.ts)} · ${P.NOME_TIPO[x.tipo] || x.tipo}${x.manual ? ' (manual)' : x.dist != null ? ` · ${x.dist} m` : ''}</span><button class="x" data-act="delMarca" data-f="${f.id}" data-id="${x.id}">✕</button></div>`).join('')).join('')}
+      </details>` : '<p class="mini">Nenhuma marcação neste mês.</p>'}
+      <form class="fMarca linha" data-f="${f.id}"><input type="date" name="dia" value="${mk === mkDe(hojeISO()) ? hojeISO() : mk + '-01'}" required><select name="tipo">${P.TIPOS.map(([k, t]) => `<option value="${k}">${t}</option>`).join('')}</select><input type="time" name="hora" required><button class="btn">+ lançar</button></form>
+    </section>`);
+  }
+  const ac = (f) => S.acessos.find((a) => a.funcId === f.id);
+  const corpo = `
+  <p><a href="#/equipe" class="btn link">‹ Equipe</a></p>
+  <div class="navdata"><a class="btn ic" href="#/ponto/${somaMes(mk, -1)}">‹</a><b>Ponto de ${nomeMes(mk)}</b><a class="btn ic" href="#/ponto/${somaMes(mk, 1)}">›</a></div>
+  ${blocos.join('')}
+  <p class="mini">* lançado à mão · ⚠ marcado fora do local (com a distância na correção).</p>
+  <section class="card"><h3>Local de trabalho <small>o ponto só é aceito dentro do raio</small></h3>
+    <p>${local.lat != null ? `Definido em ${local.lat.toFixed(5)}, ${local.lng.toFixed(5)} · <a href="https://maps.google.com/?q=${local.lat},${local.lng}" target="_blank" rel="noopener">ver no mapa</a>` : '<b class="neg">Ainda não definido: os funcionários não conseguem bater o ponto.</b>'}</p>
+    <label>Raio aceito (metros)<input id="pt-raio" data-ponto-raio="1" inputmode="numeric" value="${local.raio}"></label>
+    <button class="btn" data-act="pontoLocalAqui">📍 Usar minha localização atual (estando no estacionamento)</button>
+  </section>
+  <section class="card"><h3>Acesso dos funcionários <small>cada um entra com usuário e senha</small></h3>
+    ${funcs.map((f) => { const a = ac(f); return a
+      ? `<div class="item-folha"><span>✅</span><span class="fixo-desc"><b>${esc(f.nome)}</b> · usuário <b>${esc(a.usuario)}</b></span><button class="btn link mini perigo" data-act="removerAcesso" data-uid="${a.id}">remover</button></div>`
+      : `<form class="fAcesso linha" data-f="${f.id}"><b>${esc(f.nome)}</b><input name="usuario" value="${P.slug(f.nome.split(' ')[0])}" placeholder="usuário" required><input name="senha" placeholder="senha (6+)" minlength="6" required><button class="btn">Criar acesso</button></form>`; }).join('')}
+    <p class="mini">O funcionário abre o mesmo endereço do app e entra com o usuário e a senha. Ele vê só o próprio ponto e os próprios valores (salário, prêmio, extras, descontos, VT e o que recebe no dia 1º). Anote a senha e entregue a ele; depois ele pode trocar.</p>
+    <button class="btn" data-act="publicarPortal">🔄 Atualizar agora os valores no app dos funcionários</button>
+    <p class="mini">Os valores também são atualizados sozinhos sempre que você salva um dia ou a folha.</p>
+  </section>
+  <section class="card"><details><summary><b>Regras de segurança do Firebase</b> <small>passo obrigatório, uma vez</small></summary>
+    <p class="mini">Para os funcionários entrarem sem ver os dados da empresa, copie as regras abaixo e cole no Firebase: console.firebase.google.com → projeto → Firestore Database → Regras → Publicar.</p>
+    <textarea id="regrasFs" rows="10" style="width:100%;font-family:monospace;font-size:.7rem">${esc(REGRAS_FIRESTORE((S.store.usuario() || {}).email || 'SEU_EMAIL@gmail.com'))}</textarea>
+    <button class="btn" data-act="copiarRegras">📋 Copiar regras</button>
+  </details></section>
+  <p class="mini">Controle interno de jornada. Empresas com até 20 empregados não são obrigadas a ter ponto; se quiserem usar como registro oficial (REP-P), confirmem com o contador.</p>`;
+  $app.innerHTML = moldura(corpo, 'Ponto da equipe');
+  document.querySelectorAll('.fAcesso').forEach((fm) => fm.onsubmit = async (ev) => {
+    ev.preventDefault();
+    const fd = new FormData(fm), f = S.funcs.find((x) => x.id === fm.dataset.f);
+    const usuario = P.slug(fd.get('usuario')), senha = String(fd.get('senha'));
+    if (!usuario) return toast('Usuário inválido', true);
+    if (senha.length < 6) return toast('A senha precisa de pelo menos 6 caracteres', true);
+    fm.querySelector('button').disabled = true;
+    try {
+      const uid = await S.store.criarAcesso(P.emailDeUsuario(usuario), senha);
+      await S.store.set('equipeAcesso', uid, { funcId: f.id, nome: f.nome, usuario, email: P.emailDeUsuario(usuario), criado: new Date().toISOString() });
+      S.acessos = null; await publicarPortais(true).catch(() => {});
+      toast(`Acesso criado: usuário ${usuario}`); telaPontoEquipe(mk);
+    } catch (e) {
+      fm.querySelector('button').disabled = false;
+      toast(/email-already-in-use/.test(e.code || e.message) ? 'Esse usuário já existe. Use outro (ex.: cesar2).' : /operation-not-allowed/.test(e.code || '') ? 'Ative o login por e-mail/senha no Firebase (Authentication).' : 'Não consegui criar: ' + e.message, true);
+    }
+  });
+  document.querySelectorAll('.fMarca').forEach((fm) => fm.onsubmit = async (ev) => {
+    ev.preventDefault();
+    const fd = new FormData(fm), dia = fd.get('dia'), [hh, mi] = String(fd.get('hora')).split(':').map(Number);
+    const [yy, mm, dd] = dia.split('-').map(Number), ts = new Date(yy, mm - 1, dd, hh, mi).getTime();
+    await S.store.addPonto(fm.dataset.f, { tipo: fd.get('tipo'), dia, manual: true, por: (S.store.usuario() || {}).email || '' }, ts);
+    toast('Marcação lançada'); telaPontoEquipe(mk);
+  });
+}
+
+// ----- app do funcionário -----
+async function iniciarFuncionario(perfil) {
+  S.modoFunc = true; S.perfil = perfil;
+  document.title = 'Meu ponto · Anita';
+  await telaFuncionario();
+}
+async function telaFuncionario(msg) {
+  const pf = S.perfil, hoje = hojeISO(), mk = mkDe(hoje);
+  const [y, m] = mk.split('-').map(Number), ultimo = new Date(y, m, 0).getDate();
+  let marcas = [], portal = null, erro = '';
+  try { marcas = await S.store.listPonto(pf.funcId, `${somaMes(mk, -1)}-01`, `${mk}-${ultimo}`); } catch (e) { erro = ehPermissao(e) ? 'Seu acesso ainda não foi liberado nas regras do sistema. Avise o Alexandre.' : e.message; }
+  try { portal = await S.store.get('portal', pf.funcId); } catch (e) { /* sem valores publicados */ }
+  const dias = P.porDia(marcas), hojeD = dias.find((d) => d.dia === hoje) || { por: {}, marcas: [] };
+  const prox = P.proxima(hojeD.por);
+  const doMes = dias.filter((d) => d.dia.startsWith(mk)), totalMes = doMes.reduce((a, d) => a + d.minutos, 0);
+  S.mkPortal = S.mkPortal && portal && portal.meses && portal.meses[S.mkPortal] ? S.mkPortal : mk;
+  const v = portal && portal.meses ? portal.meses[S.mkPortal] : null;
+  const linha = (t, val, cls = '') => `<tr class="${cls}"><td>${t}</td><td class="r">${val}</td></tr>`;
+  const valores = v ? `
+    <div class="seg">${Object.keys(portal.meses).sort().map((k) => `<button class="${k === S.mkPortal ? 'on' : ''}" data-act="portalMes" data-mk="${k}">${nomeMes(k)}</button>`).join('')}</div>
+    <table class="tab"><tbody>
+      ${linha(`Salário <small>${v.diasTrab} dias</small>`, brl(v.salario))}
+      ${linha(`Prêmio${S.mkPortal === mk ? ' <small>até agora, o mês não acabou</small>' : ''}${v.regraNova && v.bonus ? `<small>diário ${brl(v.premioDiario)} + bônus ${brl(v.bonus)}</small>` : ''}`, brl(v.premio))}
+      ${v.extras.map((e) => linha(`+ ${esc(e.desc || 'Extra')}`, brl(e.valor))).join('')}
+      ${v.descontos.map((e) => linha(`− ${esc(e.desc || 'Desconto')}`, '−' + brl(e.valor))).join('')}
+      ${linha(`VT do mês`, brl(v.vt))}
+      ${linha(`<b>No dia ${dataBR(v.diaPg).slice(0, 5)} você recebe</b><small>prêmio, extras e descontos + VT do mês seguinte (${brl(v.vtProx)})</small>`, `<b>${brl(v.pagarDia1)}</b>`, 'tot')}
+    </tbody></table>
+    <p class="mini">Dias trabalhados ${v.trabalhou} · faltas ${v.faltas}${v.justificadas ? ` · justificadas ${v.justificadas}` : ''}${v.presenca != null ? ` · presença ${v.presenca}%` : ''}.${v.regraNova ? ` A equipe fez ${v.carrosEquipe} carros${v.proxMeta ? `; faltam ${v.proxMeta.carros - v.carrosEquipe} para o bônus de ${brl(v.proxMeta.valor)}` : ''}.` : ''}</p>
+    <p class="mini">Atualizado em ${new Date(portal.atualizado).toLocaleString('pt-BR').slice(0, 17)}. O salário é pago à parte. Dúvidas, fale com o Alexandre.</p>`
+    : '<p class="mini">Seus valores ainda não foram publicados.</p>';
+  $app.innerHTML = `<header class="topo"><div><b>Olá, ${esc(pf.nome || (portal && portal.nome) || '')}</b><small>Estacionamento Anita</small></div><span class="topo-dir"><button class="btn link claro" data-act="sairFunc">Sair</button></span></header>
+  <main class="func-app">
+    <section class="card ponto-hoje"><h3>Ponto de hoje <small>${dataBR(hoje)}</small></h3>
+      ${erro ? `<p class="erro">${esc(erro)}</p>` : ''}${msg ? `<p class="${msg.erro ? 'erro' : 'ok'}">${esc(msg.txt)}</p>` : ''}
+      <div class="marcas-hoje">${P.TIPOS.map(([k, t]) => `<div class="${hojeD.por[k] ? 'feita' : ''}"><small>${t}</small><b>${hojeD.por[k] ? P.horaDe(hojeD.por[k].ts) : '--:--'}</b></div>`).join('')}</div>
+      ${prox ? `<button class="btn grande bater" data-act="baterPonto" data-tipo="${prox}">🕒 Registrar ${P.NOME_TIPO[prox].toLowerCase()}</button>
+        ${prox === 'almoco' ? '<button class="btn link" data-act="baterPonto" data-tipo="saida">Sair sem intervalo de almoço</button>' : ''}`
+        : '<p class="ok">Jornada de hoje encerrada. Bom descanso!</p>'}
+      <p class="mini">O ponto só vale no estacionamento: o app confere a sua localização no momento da marcação.</p>
+    </section>
+    <section class="card"><h3>Meus valores</h3>${valores}</section>
+    <section class="card"><h3>Meu ponto <small>${nomeMes(mk)} · ${P.fmtHoras(totalMes)}</small></h3>
+      ${dias.length ? `<div class="rola"><table class="tab"><thead><tr><th>Dia</th><th>Entr.</th><th>Alm.</th><th>Volta</th><th>Saída</th><th class="r">Horas</th></tr></thead><tbody>
+      ${dias.map((d) => `<tr><td>${dataBR(d.dia).slice(0, 5)}</td>${P.TIPOS.map(([k]) => `<td>${d.por[k] ? P.horaDe(d.por[k].ts) : '—'}</td>`).join('')}<td class="r">${P.fmtHoras(d.minutos)}</td></tr>`).join('')}
+      </tbody></table></div>` : '<p class="mini">Nenhuma marcação ainda.</p>'}
+    </section>
+    <section class="card"><details><summary>Trocar minha senha</summary>
+      <form id="fSenha"><label>Nova senha (6+)<input type="password" name="senha" minlength="6" required autocomplete="new-password"></label><button class="btn">Trocar senha</button></form>
+    </details></section>
+  </main>`;
+  const fs = document.getElementById('fSenha');
+  if (fs) fs.onsubmit = async (ev) => {
+    ev.preventDefault();
+    try { await S.store.trocarSenha(new FormData(fs).get('senha')); toast('Senha trocada'); fs.reset(); }
+    catch (e) { toast(/recent-login/.test(e.code || '') ? 'Por segurança, saia, entre de novo e troque a senha logo em seguida.' : 'Não consegui trocar: ' + e.message, true); }
+  };
+}
+async function baterPonto(tipo, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = '📍 Conferindo a localização…'; }
+  try {
+    const [pos, local] = await Promise.all([pegarPosicao(), localTrabalho()]);
+    const ck = P.noLocal(pos, local);
+    if (!ck.ok) return telaFuncionario({ erro: true, txt: ck.motivo || `Você está a ${ck.dist} m do estacionamento (precisão do GPS ${ck.acc} m). O ponto só pode ser registrado no local de trabalho.` });
+    await S.store.addPonto(S.perfil.funcId, { tipo, dia: hojeISO(), lat: pos.lat, lng: pos.lng, acc: Math.round(pos.acc), dist: ck.dist, ok: true, manual: false });
+    telaFuncionario({ txt: `${P.NOME_TIPO[tipo]} registrada às ${horaAgora()}.` });
+  } catch (e) {
+    telaFuncionario({ erro: true, txt: ehPermissao(e) ? 'O sistema recusou a marcação. Avise o Alexandre.' : e.message });
+  }
 }
 
 // ---------- TELA: comparativo CCT (hoje x regra nova) ----------
@@ -1524,6 +1769,22 @@ $app.addEventListener('click', async (ev) => {
   const ctx = S.ctxDia;
   switch (act) {
     case 'tipo': S.tipoSel = el.dataset.t; telaDia(ctx.iso); break;
+    case 'baterPonto': await baterPonto(el.dataset.tipo, el); break;
+    case 'portalMes': S.mkPortal = el.dataset.mk; telaFuncionario(); break;
+    case 'sairFunc': await S.store.sair(); location.reload(); break;
+    case 'publicarPortal': S.acessos = null; await publicarPortais().catch((e) => toast('Não consegui atualizar: ' + e.message, true)); break;
+    case 'copiarRegras': { const ta = document.getElementById('regrasFs'); ta.select(); try { await navigator.clipboard.writeText(ta.value); } catch (e) { document.execCommand('copy'); } toast('Regras copiadas'); break; }
+    case 'removerAcesso': if (confirm('Remover o acesso deste funcionário ao app?')) { await S.store.del('equipeAcesso', el.dataset.uid); toast('Acesso removido'); rotear(); } break;
+    case 'delMarca': if (confirm('Apagar esta marcação?')) { await S.store.delPonto(el.dataset.f, el.dataset.id); rotear(); } break;
+    case 'pontoLocalAqui': {
+      try {
+        el.disabled = true; el.textContent = '📍 Pegando a localização…';
+        const pos = await pegarPosicao(), loc = await localTrabalho();
+        await S.store.set('config', 'local', { ...loc, lat: pos.lat, lng: pos.lng, acc: Math.round(pos.acc), definido: new Date().toISOString() });
+        toast(`Local definido (precisão ${Math.round(pos.acc)} m)`); rotear();
+      } catch (e) { el.disabled = false; toast(e.message, true); }
+      break;
+    }
     case 'cctCenario': S.cfg.cct = { ...(S.cfg.cct || {}), premioCenario: el.dataset.v }; await salvarCfg(); telaCCT(); break;
     case 'cctLimpar': if (S.cfg.cct && S.cfg.cct.pessoas) delete S.cfg.cct.pessoas[el.dataset.id]; await salvarCfg(); telaCCT(); break;
     case 'addLav': {
@@ -1791,6 +2052,7 @@ $app.addEventListener('change', async (ev) => {
     if (k !== 'obs') { delete d.legado; delete d.premioLeg; S.abrirPlanilha = true; if (!d[k]) delete d[k]; }
     salvarMes(S.ctxDia.mk); if (k !== 'obs') redesenhar(() => telaDia(S.ctxDia.iso)); return;
   }
+  if (el.dataset.pontoRaio) { const loc = await localTrabalho(); await S.store.set('config', 'local', { ...loc, raio: Math.max(30, num(el.value) || 150) }); toast('Raio salvo'); return; }
   if (el.dataset.cct || el.dataset.cctp) {
     const c = S.cfg.cct = S.cfg.cct || {};
     if (el.dataset.cct) {

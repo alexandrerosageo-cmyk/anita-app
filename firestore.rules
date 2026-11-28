@@ -1,16 +1,40 @@
+// Regras do Firestore. Troque SEU_EMAIL_AQUI pelo e-mail do administrador (o app mostra
+// esta mesma regra já preenchida em Equipe → Ponto e acesso da equipe).
 rules_version = '2';
-// Só os e-mails listados abaixo podem ler e gravar os dados do app.
-// Para incluir um sócio no futuro, acrescente o e-mail dele na lista.
 service cloud.firestore {
   match /databases/{database}/documents {
-    function autorizado() {
+    // administradores: veem e alteram tudo
+    function admin() {
+      return request.auth != null && request.auth.token.email in ['SEU_EMAIL_AQUI@gmail.com'];
+    }
+    function acesso() {
+      return get(/databases/$(database)/documents/equipeAcesso/$(request.auth.uid)).data;
+    }
+    // funcionário com acesso liberado, só para os próprios dados
+    function funcionario(fid) {
       return request.auth != null
-        && request.auth.token.email in [
-          'SEU_EMAIL_AQUI@gmail.com'
-        ];
+        && exists(/databases/$(database)/documents/equipeAcesso/$(request.auth.uid))
+        && acesso().funcId == fid;
     }
     match /{documento=**} {
-      allow read, write: if autorizado();
+      allow read, write: if admin();
+    }
+    match /equipeAcesso/{uid} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+    }
+    match /config/local {
+      allow read: if request.auth != null;
+    }
+    match /portal/{fid} {
+      allow read: if funcionario(fid);
+    }
+    match /ponto/{fid}/marcas/{m} {
+      allow read: if funcionario(fid);
+      // só marca o horário de agora (do servidor), não edita nem apaga
+      allow create: if funcionario(fid)
+        && request.resource.data.ts == request.time
+        && request.resource.data.manual == false
+        && request.resource.data.tipo in ['entrada', 'almoco', 'volta', 'saida'];
     }
   }
 }

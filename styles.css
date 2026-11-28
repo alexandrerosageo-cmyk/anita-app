@@ -308,3 +308,17 @@ body:has(.salvarbar) .toast { bottom: calc(135px + env(safe-area-inset-bottom));
 .assin-prev img { height: 70px; display: block; margin: 0 auto .2rem; }
 .pdf-assinatura img { height: 82px; margin-bottom: -10px; }
 @media print { html, body, main { background: #fff !important; } }
+/* ponto virtual / app do funcionário */
+.func-app { padding-bottom: 2rem; }
+.marcas-hoje { display: grid; grid-template-columns: repeat(4, 1fr); gap: .4rem; margin: .5rem 0; }
+.marcas-hoje > div { background: #f2f5f9; border-radius: 8px; padding: .45rem .3rem; text-align: center; }
+.marcas-hoje small { display: block; font-size: .65rem; color: var(--suave); }
+.marcas-hoje b { font-size: 1.15rem; color: var(--suave); }
+.marcas-hoje .feita { background: #e3f3e8; }
+.marcas-hoje .feita b { color: #1d7a3e; }
+.btn.bater { font-size: 1.1rem; padding: 1rem; }
+.btn.link.claro { color: #fff; }
+.ponto-hoje .ok, .card p.ok { color: #1d7a3e; font-weight: 600; }
+form.linha { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; margin-top: .5rem; }
+form.linha input, form.linha select { flex: 1 1 7rem; min-width: 0; }
+form.linha b { flex: 1 1 100%; }
