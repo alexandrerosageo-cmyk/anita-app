@@ -6,7 +6,7 @@ import * as K from './cct.js';
 import { EMAIL_BACKUP } from './firebase-config.js';
 import { criarStore, salvarConfigFirebase, interpretarConfig, lerConfigFirebase, usarFirebasePadrao } from './store.js';
 
-const VERSAO = '2.17.0';
+const VERSAO = '2.17.1';
 const $app = document.getElementById('app');
 const S = { store: null, cfg: null, funcs: [], frota: [], meses: {}, tipoSel: 'paga', salvando: 0 };
 
@@ -909,10 +909,10 @@ async function telaCCT() {
       ${meses.map((m) => `<tr><td>${nomeMes(m.mk).slice(0, 3)}/${m.mk.slice(2, 4)}</td><td>${m.nova ? '<span class="tag n3">nova</span>' : '<span class="tag">hoje</span>'}</td><td class="r">${m.extra ? brl(m.extra) : '—'}</td><td class="r">${brl(m.acum)}</td></tr>`).join('')}
     </tbody></table></div>
   </section>
-  <section class="card"><h3>Premissas</h3>
+  <section class="card"><h3>Premissas <small>valores da CCT 2026/2027; campo vazio volta ao da convenção</small></h3>
     <div class="grade-folha">
-      ${par('minimo', 'Salário mínimo (R$)', 'insalubridade')}${par('pisoLavador', 'Piso lavador (R$)')}${par('pisoGeral', 'Piso geral (R$)')}
-      ${par('pisoSeco', 'Piso manobrista/seco (R$)')}${par('caixaPct', 'Grat. caixa (%)')}${par('insalPct', 'Insalubridade (%)')}
+      ${par('minimo', 'Salário mínimo nacional (R$)')}${par('pisoLavador', 'Piso lavador (R$)')}${par('pisoGeral', 'Piso geral (R$)')}
+      ${par('pisoSeco', 'Piso manobrista/seco (R$)')}${par('caixaPct', 'Grat. caixa (%)', 'sobre o salário')}${par('insalPct', 'Insalubridade (%)', 'sobre o mínimo')}
       ${par('quinqPct', 'Quinquênio (%)')}${par('va', 'VA mínimo (R$)')}${par('mesesBase', 'Meses para as médias')}
       <label>Prêmio médio hoje (R$)<input id="cct-par-premioHojeManual" data-cct="premioHojeManual" inputmode="decimal" value="${p.premioHojeManual != null ? fmtN(p.premioHojeManual) : ''}" placeholder="${fmtN(auto.premioHoje)}"></label>
       <label>Prêmio médio regra nova (R$)<input id="cct-par-premioNovoManual" data-cct="premioNovoManual" inputmode="decimal" value="${p.premioNovoManual != null ? fmtN(p.premioNovoManual) : ''}" placeholder="${fmtN(auto.premioNovo)}"></label>
@@ -1797,6 +1797,7 @@ $app.addEventListener('change', async (ev) => {
       const k = el.dataset.cct;
       if (k === 'adocao') c.adocao = el.value || K.CCT_PADRAO.adocao;
       else if (/Manual$/.test(k)) c[k] = el.value.trim() === '' ? null : num(el.value);
+      else if (el.value.trim() === '' || !num(el.value)) delete c[k]; // vazio volta ao valor da convenção
       else c[k] = num(el.value);
     } else {
       const pp = c.pessoas = c.pessoas || {}, e = pp[el.dataset.cctp] = pp[el.dataset.cctp] || {}, k = el.dataset.k;

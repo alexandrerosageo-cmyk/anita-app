@@ -36,7 +36,11 @@ export const CLAUSULAS = [
   ['64ª Danos em veículos', 'Desconto permitido com culpa comprovada, em até 8 parcelas de no máximo 30% do salário.', 'Fora do quadro.'],
 ];
 
-export const prm = (cfg) => ({ ...CCT_PADRAO, ...((cfg && cfg.cct) || {}) });
+export function prm(cfg) {
+  const c = { ...((cfg && cfg.cct) || {}) };
+  for (const k of ['minimo', 'pisoLavador', 'pisoGeral', 'pisoSeco', 'caixaPct', 'insalPct', 'quinqPct', 'va', 'vtDias', 'mesesBase']) if (!Number(c[k])) delete c[k];
+  return { ...CCT_PADRAO, ...c };
+}
 
 export function anosDeCasa(admissao, hoje) {
   if (!admissao) return 0;
