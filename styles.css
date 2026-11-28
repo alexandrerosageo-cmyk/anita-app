@@ -357,3 +357,4 @@ tr.pago td { background: #f0f8f2; }
 .sab-lista > div.eu { background: #e8f0fc; font-weight: 600; }
 .sab-lista > div.eu::after { content: 'você'; margin-left: auto; font-size: .7rem; color: var(--azul); }
 .sab-lista > div.fech { color: var(--suave); text-decoration: line-through; }
+.banco { border-top: 1px solid var(--borda); margin-top: .6rem; padding-top: .6rem; }
