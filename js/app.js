@@ -8,7 +8,7 @@ import * as E from './escala.js';
 import { EMAIL_BACKUP } from './firebase-config.js';
 import { criarStore, salvarConfigFirebase, interpretarConfig, lerConfigFirebase, usarFirebasePadrao } from './store.js';
 
-const VERSAO = '2.21.2';
+const VERSAO = '2.22.0';
 const $app = document.getElementById('app');
 const S = { store: null, cfg: null, funcs: [], frota: [], meses: {}, tipoSel: 'paga', salvando: 0 };
 
@@ -913,6 +913,23 @@ function pegarPosicao() {
   });
 }
 
+// incentivo do dia: carros, comissão e quanto a mais cada um ganha batendo a próxima meta
+function ticketMedio(ap) { return ap.tot.pagas ? C.r2(ap.tot.valorPagas / ap.tot.pagas) : 60; }
+function diasUteisRestantes(iso) { const [y, m] = iso.split('-').map(Number), ult = new Date(y, m, 0).getDate(); let n = 0; for (let d = Number(iso.slice(8)) + 1; d <= ult; d++) { const w = new Date(y, m - 1, d).getDay(); if (w >= 1 && w <= 6) n++; } return n; }
+function incentivoHoje(M, ap) {
+  const iso = hojeISO(), dia = (M.dias || {})[iso.slice(8)], p = C.premioDia(dia, iso, S.cfg), tk = ticketMedio(ap);
+  const out = { dia: iso, contados: p.contados, premio: p.porPessoa, pct: p.faixa ? p.faixa.pct : null, ticket: tk, regraNova: C.regraNova(iso, S.cfg) };
+  if (out.regraNova) {
+    const pr = C.proximaFaixa(p.contados, iso, S.cfg);
+    if (pr) { const novo = C.r2((p.base + pr.faltam * tk) * pr.pct / 100); out.prox = { faltam: pr.faltam, pct: pr.pct, premio: novo, ganho: C.r2(novo - p.porPessoa) }; }
+  } else {
+    // regra antiga: cada lavagem paga a mais aumenta o percentual e a base
+    const a = C.apuraDia(dia, S.cfg), mais = C.premioAntigo({ ...a, pagas: a.pagas + 1, valorPagas: a.valorPagas + tk }, S.cfg);
+    out.mais1 = { premio: mais.total, ganho: C.r2(mais.total - p.porPessoa) };
+  }
+  return out;
+}
+
 // valores de cada funcionário, publicados para o app dele (mês atual e anterior)
 function valoresFunc(f, mk, M, ap, Mp) {
   const pf = ap.porFunc[f.id] || { T: 0, F: 0, J: 0, previstos: 0, presencaPct: 0, premioDiario: 0, bonus: 0, premioTotal: 0, elegivelBonus: false };
@@ -927,10 +944,9 @@ function valoresFunc(f, mk, M, ap, Mp) {
     descontos: (r.fixos || []).filter((x) => x.ativo && x.sinal !== '+').map((x) => ({ desc: x.desc, valor: x.valor })).concat((fo.descontos || []).filter((e) => Number(e.valor)).map((e) => ({ desc: e.desc, valor: Number(e.valor) }))),
     vt: r.vt, variavel: r.variavel, vtProx: vtProx.vt, pagarDia1: C.r2(r.variavel + vtProx.vt), diaPg: C.diaPagamento(mk),
     regraNova: !!ap.regraNova, carrosEquipe: ap.tot.contados, proxMeta: prox ? { carros: prox.min, valor: prox.valor } : null,
-    hoje: mk === mkDe(hojeISO()) ? (() => {
-      const iso = hojeISO(), p = C.premioDia((M.dias || {})[iso.slice(8)], iso, S.cfg);
-      return { dia: iso, contados: p.contados, premio: p.porPessoa, pct: p.faixa ? p.faixa.pct : null, prox: C.regraNova(iso, S.cfg) ? C.proximaFaixa(p.contados, iso, S.cfg) : null };
-    })() : null,
+    hoje: mk === mkDe(hojeISO()) ? incentivoHoje(M, ap) : null,
+    extrasHoras: C.r2(((fo.extras || []).filter((e) => e.ponto)).reduce((a, e) => a + (Number(e.valor) || 0), 0)),
+    restamDias: mk === mkDe(hojeISO()) ? diasUteisRestantes(hojeISO()) : 0,
   };
 }
 async function publicarPortais(silencioso) {
@@ -944,12 +960,21 @@ async function publicarPortais(silencioso) {
   let n = 0;
   for (const fid of new Set(S.acessos.map((a) => a.funcId))) {
     const f = S.funcs.find((x) => x.id === fid); if (!f) continue;
-    const doc = { nome: f.nome, horario: horarioEfetivo(f, E.addDias(hojeISO(), -35), E.addDias(hojeISO(), 70)), atualizado: new Date().toISOString(), meses: {} };
+    const doc = { nome: f.nome, horario: horarioEfetivo(f, E.addDias(hojeISO(), -35), E.addDias(hojeISO(), 70)), escala: escalaParaFunc(f), atualizado: new Date().toISOString(), meses: {} };
     for (const mk of meses) doc.meses[mk] = valoresFunc(f, mk, dados[mk].M, dados[mk].ap, dados[mk].Mp);
     await S.store.set('portal', fid, doc); n++;
   }
   if (!silencioso) toast(`Valores atualizados no app de ${n} funcionário${n === 1 ? '' : 's'}`);
   return n;
+}
+// sábados do mês atual e do próximo (quem trabalha) e as folgas da pessoa, para o app dela
+function escalaParaFunc(f) {
+  const ctx = ctxEscala(), hoje = hojeISO(), mks = [mkDe(hoje), somaMes(mkDe(hoje), 1)], out = { desde: ctx.desde, meses: {}, folgas: [] };
+  const nomeCurto = (id) => ((S.funcs.find((x) => x.id === id) || {}).nome || '').split(' ')[0];
+  for (const mk of mks) out.meses[mk] = E.sabadosDoAno(Number(mk.slice(0, 4))).filter((sb) => sb.startsWith(mk)).map((sb) => ({ sab: sb, fechado: !!ctx.fechados[sb], nomes: (ctx.sabados[sb] || []).map(nomeCurto), eu: E.trabalhaSabado(f.id, sb, ctx.sabados) }));
+  const p = ctx.pessoas.find((x) => x.id === f.id);
+  if (p) for (let iso = hoje; iso <= E.addDias(hoje, 62); iso = E.addDias(iso, 1)) if (E.folgaAposSabado(p, iso, ctx)) out.folgas.push(iso);
+  return out;
 }
 let timerPortal = null;
 function agendarPortal() { if (!S.acessos || !S.acessos.length) return; clearTimeout(timerPortal); timerPortal = setTimeout(() => publicarPortais(true).catch(() => {}), 4000); }
@@ -1064,19 +1089,40 @@ async function telaFuncionario(msg) {
     return `<button class="pbtn ${feito ? 'feito' : ''} ${k === prox && dentro ? 'prox' : ''}" data-act="baterPonto" data-tipo="${k}" ${pode ? '' : 'disabled'}><span>${t}</span><b>${feito ? P.horaDe(feito.ts) : '--:--'}</b></button>`;
   };
   const v = portal && portal.meses && portal.meses[mkDe(hoje)], hj = v && v.hoje && v.hoje.dia === hoje ? v.hoje : null;
+  const pct = (x) => String(x).replace('.', ',');
+  let metaDia = '';
+  if (hj && hj.regraNova) metaDia = hj.prox ? `🎯 Faltam <b>${hj.prox.faltam} carro${hj.prox.faltam > 1 ? 's' : ''}</b> para a comissão de hoje subir para <b>${pct(hj.prox.pct)}%</b>: cerca de <b>+${brl(hj.prox.ganho)}</b> para cada um. Bora!` : (hj.contados ? '🏆 Meta máxima do dia batida! Cada carro a mais ainda soma na comissão.' : '');
+  else if (hj && hj.mais1) metaDia = `🚗 Cada lavagem paga a mais hoje rende cerca de <b>+${brl(hj.mais1.ganho)}</b> para cada um.`;
+  let metaMes = '';
+  if (v && v.regraNova) {
+    if (v.proxMeta) { const falta = v.proxMeta.carros - v.carrosEquipe, porDia = v.restamDias ? Math.ceil(falta / v.restamDias) : falta; metaMes = `🎯 Faltam <b>${falta} carros</b> no mês para o bônus de <b>+${brl(v.proxMeta.valor)}</b> para cada um${v.restamDias > 1 ? ` (cerca de <b>${porDia} por dia</b> nos ${v.restamDias} dias que restam)` : v.restamDias === 1 ? ' (resta 1 dia de trabalho no mês)' : ''}.`; }
+    else metaMes = '🏆 Bônus mensal máximo garantido! Parabéns, equipe.';
+  }
   const comissao = v ? `
     <div class="kpis">
       <div class="kpi"><small>Carros hoje</small><b>${hj ? hj.contados : 0}</b><small>equipe</small></div>
-      <div class="kpi"><small>Comissão hoje</small><b>${brl(hj ? hj.premio : 0)}</b>${hj && hj.pct ? `<small>${String(hj.pct).replace('.', ',')}% da base</small>` : ''}</div>
+      <div class="kpi"><small>Comissão hoje</small><b>${brl(hj ? hj.premio : 0)}</b>${hj && hj.pct ? `<small>${pct(hj.pct)}% da base</small>` : ''}</div>
     </div>
-    <p class="meta-falta">${hj && hj.prox ? `🎯 Faltam <b>${hj.prox.faltam} carro${hj.prox.faltam > 1 ? 's' : ''}</b> hoje para a comissão subir para <b>${String(hj.prox.pct).replace('.', ',')}%</b>.` : v.regraNova ? '🏆 Meta máxima do dia atingida!' : ''}</p>
+    ${metaDia ? `<p class="meta-falta">${metaDia}</p>` : ''}
     <div class="kpis">
       <div class="kpi"><small>Carros no mês</small><b>${v.carrosEquipe}</b><small>equipe</small></div>
-      <div class="kpi"><small>Comissão do mês</small><b>${brl(v.premio)}</b><small>até agora</small></div>
+      <div class="kpi"><small>Comissão do mês</small><b>${brl(v.premio)}</b><small>até agora${v.bonus ? `, com bônus ${brl(v.bonus)}` : ''}</small></div>
     </div>
-    <p class="meta-falta">${v.proxMeta ? `🎯 Faltam <b>${v.proxMeta.carros - v.carrosEquipe} carros</b> no mês para o bônus de <b>${brl(v.proxMeta.valor)}</b>.` : v.regraNova ? '🏆 Bônus mensal máximo atingido!' : ''}</p>
-    <p class="mini">Atualizado às ${new Date(portal.atualizado).toLocaleTimeString('pt-BR').slice(0, 5)} de ${new Date(portal.atualizado).toLocaleDateString('pt-BR').slice(0, 5)}.</p>`
+    ${metaMes ? `<p class="meta-falta">${metaMes}</p>` : ''}
+    ${v.extrasHoras ? `<p class="mini">Horas extras aprovadas no mês: <b>${brl(v.extrasHoras)}</b>.</p>` : ''}
+    <p class="mini">Comissão e bônus são pagos no dia ${dataBR(v.diaPg).slice(0, 5)}. Atualizado às ${new Date(portal.atualizado).toLocaleTimeString('pt-BR').slice(0, 5)} de ${new Date(portal.atualizado).toLocaleDateString('pt-BR').slice(0, 5)}.</p>`
     : '<p class="mini">Os números do dia ainda não foram publicados.</p>';
+  // próximo dia de trabalho
+  const cal = (h && h.calendario) || {};
+  let proxDia = null; for (let i = 1; i <= 14; i++) { const iso = E.addDias(hoje, i); if (cal[iso]) { proxDia = { iso, ...cal[iso] }; break; } }
+  const amanha = E.addDias(hoje, 1), nomeDia = (iso) => ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'][new Date(iso + 'T12:00').getDay()];
+  const blocoAmanha = proxDia ? `<p>${proxDia.iso === amanha ? '<b>Amanhã</b>' : `Amanhã (${nomeDia(amanha)}) é folga. <b>Próximo dia</b>`}: ${nomeDia(proxDia.iso)} ${dataBR(proxDia.iso).slice(0, 5)}, das <b>${P.minParaHora(proxDia.ini)} às ${P.minParaHora(proxDia.fim)}</b>${proxDia.almoco ? ` (intervalo de ${proxDia.almoco} min)` : ''}.</p>` : '';
+  // sábados e folgas
+  const es = portal && portal.escala;
+  const blocoEscala = es ? Object.entries(es.meses || {}).filter(([, l]) => l.length).map(([mk, l]) => `<h4>Sábados de ${nomeMes(mk).split(' ')[0]}</h4>
+      <div class="sab-lista">${l.map((x) => `<div class="${x.eu ? 'eu' : ''} ${x.fechado ? 'fech' : ''}"><b>${dataBR(x.sab).slice(0, 5)}</b><span>${x.fechado ? 'não abrimos' : x.nomes.length ? esc(x.nomes.join(', ')) : 'a definir'}</span></div>`).join('')}</div>`).join('')
+      + (es.folgas && es.folgas.length ? `<p class="mini">Suas folgas pelo sábado trabalhado: <b>${es.folgas.map((d) => `${nomeDia(d)} ${dataBR(d).slice(0, 5)}`).join(', ')}</b>.</p>` : (hoje < es.desde ? `<p class="mini">A escala 5x2, com folga depois do sábado trabalhado, começa em ${dataBR(es.desde)}.</p>` : ''))
+    : '';
   $app.innerHTML = `<header class="topo"><div><b>Olá, ${esc(pf.nome || (portal && portal.nome) || '')}</b><small>${dataBR(hoje)}${jan ? ` · expediente ${P.minParaHora(jan.exp.ini)}–${P.minParaHora(jan.exp.fim)}` : ''}</small></div><span class="topo-dir"><button class="btn link claro" data-act="sairFunc">Sair</button></span></header>
   <main class="func-app">
     <section class="card">
@@ -1085,6 +1131,7 @@ async function telaFuncionario(msg) {
       ${aviso ? `<p class="mini">${esc(aviso)}</p>` : '<p class="mini">O ponto só é aceito no estacionamento.</p>'}
     </section>
     <section class="card">${comissao}</section>
+    ${blocoAmanha || blocoEscala ? `<section class="card"><h3>Minha escala</h3>${blocoAmanha}${blocoEscala}</section>` : ''}
     <details class="mini senha"><summary>Trocar minha senha</summary>
       <form id="fSenha" class="linha"><input type="password" name="senha" minlength="6" required autocomplete="new-password" placeholder="nova senha (6+)"><button class="btn">Trocar</button></form>
     </details>

@@ -352,3 +352,8 @@ tr.pago td { background: #f0f8f2; }
 .chip.on { background: var(--azul); border-color: var(--azul); color: #fff; }
 .chip.off { background: #fdecea; border-color: #f5c2bd; color: #b3261e; }
 .esc-sab.fechado b { color: var(--suave); }
+.sab-lista { display: grid; gap: .3rem; }
+.sab-lista > div { display: flex; gap: .6rem; align-items: center; padding: .35rem .5rem; border-radius: 8px; background: #f6f8fb; }
+.sab-lista > div.eu { background: #e8f0fc; font-weight: 600; }
+.sab-lista > div.eu::after { content: 'você'; margin-left: auto; font-size: .7rem; color: var(--azul); }
+.sab-lista > div.fech { color: var(--suave); text-decoration: line-through; }
