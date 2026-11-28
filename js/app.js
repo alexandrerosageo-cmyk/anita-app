@@ -8,7 +8,7 @@ import * as E from './escala.js';
 import { EMAIL_BACKUP } from './firebase-config.js';
 import { criarStore, salvarConfigFirebase, interpretarConfig, lerConfigFirebase, usarFirebasePadrao } from './store.js';
 
-const VERSAO = '2.23.0';
+const VERSAO = '2.23.1';
 const $app = document.getElementById('app');
 const S = { store: null, cfg: null, funcs: [], frota: [], meses: {}, tipoSel: 'paga', salvando: 0 };
 
@@ -1041,7 +1041,8 @@ async function telaPontoEquipe(mk) {
       const s = P.saldoDia(dd, h), pago = pagoComoExtra(M, f.id, iso);
       linhas.push({ iso, dd, ...s, pago });
     }
-    const trab = linhas.reduce((a, l) => a + l.dd.minutos, 0), prev = linhas.reduce((a, l) => a + l.previsto, 0);
+    const trab = linhas.reduce((a, l) => a + l.trab, 0), prev = linhas.reduce((a, l) => a + l.previsto, 0);
+    const nSemAlm = linhas.filter((l) => l.semAlmoco).length, nInc = linhas.filter((l) => l.incompleto).length;
     const banco = linhas.filter((l) => !l.pago && l.dd.marcas.length).reduce((a, l) => a + l.saldo, 0);
     const pagoR = linhas.filter((l) => l.pago).reduce((a, l) => a + (((M.folha[f.id].extras.find((e) => e.ponto === l.iso)) || {}).valor || 0), 0);
     const cel = (l, k) => { const x = l.dd.por[k]; return `<input type="time" class="hora-in ${x && x.ok === false ? 'neg' : ''} ${x && x.manual ? 'manual' : ''}" data-pm="${f.id}" data-dia="${l.iso}" data-tipo="${k}" data-id="${x ? x.id : ''}" value="${x ? P.horaDe(x.ts) : ''}" title="${x ? (x.manual ? 'ajustado pelo administrador' : x.dist != null ? `${x.dist} m do local` : '') : 'sem marcação'}">`; };
@@ -1049,9 +1050,10 @@ async function telaPontoEquipe(mk) {
       <div class="kpis"><div class="kpi"><small>Trabalhado</small><b>${P.fmtHoras(trab)}</b><small>previsto ${P.fmtHoras(prev)}</small></div>
         <div class="kpi"><small>Banco de horas</small><b class="${banco > 0 ? 'pos' : banco < 0 ? 'neg' : ''}">${P.fmtSaldo(banco)}</b><small>no mês</small></div>
         <div class="kpi"><small>Pago como extra</small><b>${brl(pagoR)}</b></div></div>
+      ${nSemAlm || nInc ? `<p class="mini alerta">⚠ ${nSemAlm ? `${nSemAlm} dia${nSemAlm > 1 ? 's' : ''} sem marcar o almoço (o intervalo previsto foi descontado do banco)` : ''}${nSemAlm && nInc ? ' · ' : ''}${nInc ? `${nInc} dia${nInc > 1 ? 's' : ''} com marcação incompleta` : ''}. Linhas em amarelo: confira e corrija se for o caso.</p>` : ''}
       ${linhas.length ? `<div class="rola"><table class="tab ponto-tab"><thead><tr><th>Dia</th><th>Entr.</th><th>Alm.</th><th>Volta</th><th>Saída</th><th class="r">Trab.</th><th class="r">Saldo</th><th>Extra</th></tr></thead><tbody>
-      ${linhas.map((l) => `<tr class="${l.pago ? 'pago' : ''}"><td>${l.iso.slice(8)}/${l.iso.slice(5, 7)}<small>${['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'][new Date(l.iso + 'T12:00').getDay()]}</small></td>${P.TIPOS.map(([k]) => `<td>${cel(l, k)}</td>`).join('')}
-        <td class="r">${P.fmtHoras(l.dd.minutos)}</td><td class="r ${l.saldo > 0 ? 'pos' : l.saldo < 0 ? 'neg' : ''}">${l.dd.marcas.length ? P.fmtSaldo(l.saldo) : '—'}</td>
+      ${linhas.map((l) => `<tr class="${l.pago ? 'pago' : ''} ${l.semAlmoco || l.incompleto ? 'pt-falta' : ''}"><td>${l.iso.slice(8)}/${l.iso.slice(5, 7)}<small>${['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'][new Date(l.iso + 'T12:00').getDay()]}</small></td>${P.TIPOS.map(([k]) => `<td>${cel(l, k)}</td>`).join('')}
+        <td class="r">${P.fmtHoras(l.trab)}${l.semAlmoco ? `<small class="alerta">sem almoço: −${l.almocoPrevisto} min</small>` : l.incompleto ? '<small class="alerta">marcação incompleta</small>' : ''}</td><td class="r ${l.saldo > 0 ? 'pos' : l.saldo < 0 ? 'neg' : ''}">${l.dd.marcas.length ? P.fmtSaldo(l.saldo) : '—'}</td>
         <td>${l.saldo > 0 || l.pago ? `<label class="chk"><input type="checkbox" data-pextra="${f.id}" data-dia="${l.iso}" data-min="${Math.max(0, l.saldo)}" ${l.pago ? 'checked' : ''}> ${l.pago ? 'pago' : brl(P.valorExtra(l.saldo, f.salario))}</label>` : ''}</td></tr>`).join('')}
       </tbody></table></div>` : '<p class="mini">Nenhum dia de expediente neste mês até hoje.</p>'}
     </section>`);

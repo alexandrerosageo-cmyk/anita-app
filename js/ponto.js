@@ -99,9 +99,13 @@ export function janela(h, iso, jan) {
 export const minParaHora = (min) => `${p2(Math.floor(min / 60))}:${p2(min % 60)}`;
 
 // saldo do dia = trabalhado − previsto (positivo vai para o banco de horas)
+// sem marcar o almoço, desconta o intervalo previsto (a falha de registro é do funcionário)
 export function saldoDia(d, h) {
-  const e = expediente(h, d.dia), previsto = e ? e.previsto : 0;
-  return { previsto, saldo: d.minutos - previsto };
+  const e = expediente(h, d.dia), previsto = e ? e.previsto : 0, por = d.por || {};
+  const semAlmoco = !!(por.entrada && por.saida && !por.almoco && !por.volta && e && e.almoco > 0 && (por.saida.ts - por.entrada.ts) / 60000 > 360);
+  const incompleto = !!((por.almoco && !por.volta) || (!por.almoco && por.volta) || (por.entrada && !por.saida && d.dia < diaDe(Date.now())));
+  const trab = Math.max(0, d.minutos - (semAlmoco ? e.almoco : 0));
+  return { previsto, trab, saldo: trab - previsto, semAlmoco, incompleto, almocoPrevisto: e ? e.almoco : 0 };
 }
 export const fmtSaldo = (min) => (min ? `${min > 0 ? '+' : '−'}${fmtHoras(Math.abs(min))}` : '0h00');
 
