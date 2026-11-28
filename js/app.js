@@ -8,7 +8,7 @@ import * as E from './escala.js';
 import { EMAIL_BACKUP } from './firebase-config.js';
 import { criarStore, salvarConfigFirebase, interpretarConfig, lerConfigFirebase, usarFirebasePadrao } from './store.js';
 
-const VERSAO = '2.20.2';
+const VERSAO = '2.21.0';
 const $app = document.getElementById('app');
 const S = { store: null, cfg: null, funcs: [], frota: [], meses: {}, tipoSel: 'paga', salvando: 0 };
 
@@ -694,6 +694,24 @@ async function telaMes(mk) {
   S.ctxMes = mk;
 }
 
+// horário dia a dia na ficha do funcionário
+function fichaHorario(f) {
+  const dias = E.diasDoCadastro(f.horario), h = f.horario || {}, cb = h.cobertura || {};
+  const lin = (pre, x, rot) => `<tr><td>${rot}</td><td><input type="time" class="hora-in" name="${pre}e" value="${x.e || ''}"></td><td><input type="time" class="hora-in" name="${pre}s" value="${x.s || ''}"></td><td><input type="time" class="hora-in" name="${pre}ai" value="${x.ai || ''}"></td><td><input class="hora-in" name="${pre}a" inputmode="numeric" style="width:3.2rem" value="${x.a ?? ''}"></td></tr>`;
+  return `<h4>Horário de trabalho <small>deixe em branco os dias de folga</small></h4>
+    <div class="rola"><table class="tab ponto-tab"><thead><tr><th></th><th>Entrada</th><th>Saída</th><th>Intervalo</th><th>min</th></tr></thead><tbody>
+    ${E.DIAS.map(([d, n]) => lin('d' + d, dias[d] || {}, n)).join('')}
+    ${lin('cb', cb, 'Cobrindo folga')}
+    </tbody></table></div>
+    <div class="grade2"><label>Folga depois do sábado trabalhado<select name="hFolgaApos">${E.DIAS.slice(0, 5).map(([d, n]) => `<option value="${d}" ${Number(h.folgaApos || 3) === d ? 'selected' : ''}>${n} da semana seguinte</option>`).join('')}</select></label></div>
+    <p class="mini">Sábado: o horário vale só nos sábados em que ele estiver na escala (a partir de ${dataBR(cfgEscala().desde)}). "Cobrindo folga" é o horário dele no dia em que um colega da mesma função folga pelo sábado (em branco = horário normal). Intervalo: início e duração em minutos (60 de almoço; 15 de pausa em jornadas de 4h a 6h).</p>`;
+}
+function lerFichaHorario(fd) {
+  const dia = (pre) => { const e = fd.get(pre + 'e'), s = fd.get(pre + 's'); if (!e || !s) return null; const a = fd.get(pre + 'a'); const x = { e, s, a: a === '' || a == null ? (E.hm(s) - E.hm(e) > 360 ? 60 : E.hm(s) - E.hm(e) > 240 ? 15 : 0) : num(a) }; const ai = fd.get(pre + 'ai'); if (ai) x.ai = ai; return x; };
+  const dias = {}; for (const [d] of E.DIAS) { const x = dia('d' + d); if (x) dias[d] = x; }
+  return { dias, folgaApos: Number(fd.get('hFolgaApos')) || 3, cobertura: dia('cb') };
+}
+
 // ---------- TELA: equipe / folha ----------
 async function telaEquipe(mk) {
   const M = await mes(mk);
@@ -775,15 +793,9 @@ async function telaEquipe(mk) {
           <label>Admissão<input type="date" name="admissao" value="${f.admissao || ''}"></label>
           <label>Desligamento<input type="date" name="desligamento" value="${f.desligamento || ''}"></label>
           <label>Chave PIX<input name="pix" value="${esc(f.pix || '')}"></label>
-          <label>Entrada (seg–sex)<input type="time" name="hEntrada" value="${(f.horario || {}).entrada || ''}"></label>
-          <label>Saída (seg–sex)<input type="time" name="hSaida" value="${(f.horario || {}).saida || ''}"></label>
-          <label>Almoço (minutos)<input name="hAlmoco" inputmode="numeric" value="${(f.horario || {}).almoco ?? 60}"></label>
-          <label>Início do almoço<input type="time" name="hAlmocoIni" value="${(f.horario || {}).almocoIni || ''}"></label>
-          <label>Entrada sábado<input type="time" name="hSabEntrada" value="${(f.horario || {}).sabEntrada || ''}"></label>
-          <label>Saída sábado<input type="time" name="hSabSaida" value="${(f.horario || {}).sabSaida || ''}"></label>
-          <label>Folga na semana do sábado<select name="hFolgaSab">${E.DIAS.slice(0, 5).map(([d, n]) => `<option value="${d}" ${Number((f.horario || {}).folgaSab || 4) === d ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
           <label class="chk"><input type="checkbox" name="ativo" ${f.ativo !== false ? 'checked' : ''}> Ativo</label>
         </div>
+        ${fichaHorario(f)}
         <button class="btn grande">Salvar cadastro</button>
       </form>
       <h4>Lançamentos fixos todo mês</h4>
@@ -824,7 +836,7 @@ async function telaEquipe(mk) {
     ev.preventDefault(); const fd = new FormData(fm); const f = S.funcs.find((x) => x.id === fm.dataset.id);
     Object.assign(f, { nome: fd.get('nome').trim(), funcao: fd.get('funcao'), salario: num(fd.get('salario')), vtDia: num(fd.get('vtDia')), vtDiasPadrao: num(fd.get('vtDiasPadrao')) || null,
       telefone: fd.get('telefone').trim(), pix: fd.get('pix').trim(), admissao: fd.get('admissao') || null, desligamento: fd.get('desligamento') || null, ativo: !!fd.get('ativo'),
-      horario: { entrada: fd.get('hEntrada') || '', saida: fd.get('hSaida') || '', almoco: num(fd.get('hAlmoco')) || 0, almocoIni: fd.get('hAlmocoIni') || '', sabEntrada: fd.get('hSabEntrada') || '', sabSaida: fd.get('hSabSaida') || '', folgaSab: Number(fd.get('hFolgaSab')) || 4 } });
+      horario: lerFichaHorario(fd) });
     agendarPortal();
     await salvarFunc(f); toast('Cadastro salvo'); telaEquipe(mk);
   });
@@ -932,8 +944,7 @@ async function publicarPortais(silencioso) {
   let n = 0;
   for (const fid of new Set(S.acessos.map((a) => a.funcId))) {
     const f = S.funcs.find((x) => x.id === fid); if (!f) continue;
-    const ce = cfgEscala();
-    const doc = { nome: f.nome, horario: { ...(f.horario || {}), fechados: Object.keys(ce.fechados), escala: (f.horario && f.horario.entrada) || f.escala ? { desde: ce.desde, ...E.modelosDe(f), sabados: Object.keys(ce.sabados).filter((k) => ce.sabados[k].includes(f.id)) } : null }, atualizado: new Date().toISOString(), meses: {} };
+    const doc = { nome: f.nome, horario: horarioEfetivo(f, E.addDias(hojeISO(), -35), E.addDias(hojeISO(), 70)), atualizado: new Date().toISOString(), meses: {} };
     for (const mk of meses) doc.meses[mk] = valoresFunc(f, mk, dados[mk].M, dados[mk].ap, dados[mk].Mp);
     await S.store.set('portal', fid, doc); n++;
   }
@@ -954,7 +965,7 @@ async function telaPontoEquipe(mk) {
   const hoje = hojeISO(), ateDia = mk === mkDe(hoje) ? Number(hoje.slice(8)) : mk < mkDe(hoje) ? ultimo : 0;
   const blocos = [];
   for (const f of funcs) {
-    const h = f.horario || {}, temH = P.temHorario(h);
+    const h = horarioEfetivo(f, `${mk}-01`, `${mk}-${C.pad(ultimo)}`), temH = !!resumoHorario(f);
     const marcas = await S.store.listPonto(f.id, `${mk}-01`, `${mk}-${C.pad(ultimo)}`).catch(() => []);
     const porData = Object.fromEntries(P.porDia(marcas).map((d) => [d.dia, d]));
     const linhas = [];
@@ -968,7 +979,7 @@ async function telaPontoEquipe(mk) {
     const banco = linhas.filter((l) => !l.pago && l.dd.marcas.length).reduce((a, l) => a + l.saldo, 0);
     const pagoR = linhas.filter((l) => l.pago).reduce((a, l) => a + (((M.folha[f.id].extras.find((e) => e.ponto === l.iso)) || {}).valor || 0), 0);
     const cel = (l, k) => { const x = l.dd.por[k]; return `<input type="time" class="hora-in ${x && x.ok === false ? 'neg' : ''} ${x && x.manual ? 'manual' : ''}" data-pm="${f.id}" data-dia="${l.iso}" data-tipo="${k}" data-id="${x ? x.id : ''}" value="${x ? P.horaDe(x.ts) : ''}" title="${x ? (x.manual ? 'ajustado pelo administrador' : x.dist != null ? `${x.dist} m do local` : '') : 'sem marcação'}">`; };
-    blocos.push(`<section class="card" id="pt-${f.id}"><h3>${esc(f.nome)} <small>${temH ? `${h.entrada}–${h.saida}${h.almoco ? ` · almoço ${h.almoco} min` : ''}${h.sabEntrada ? ` · sáb ${h.sabEntrada}–${h.sabSaida}` : ''}` : '<span class="neg">sem horário: cadastre na ficha (Equipe)</span>'}</small></h3>
+    blocos.push(`<section class="card" id="pt-${f.id}"><h3>${esc(f.nome)} <small>${temH ? esc(resumoHorario(f)) : '<span class="neg">sem horário: cadastre na ficha (Equipe)</span>'}</small></h3>
       <div class="kpis"><div class="kpi"><small>Trabalhado</small><b>${P.fmtHoras(trab)}</b><small>previsto ${P.fmtHoras(prev)}</small></div>
         <div class="kpi"><small>Banco de horas</small><b class="${banco > 0 ? 'pos' : banco < 0 ? 'neg' : ''}">${P.fmtSaldo(banco)}</b><small>no mês</small></div>
         <div class="kpi"><small>Pago como extra</small><b>${brl(pagoR)}</b></div></div>
@@ -1102,97 +1113,105 @@ async function baterPonto(tipo, btn) {
 
 // ---------- TELA: escala 5x2 (#/escala/AAAA-MM) ----------
 const CORES_ESC = { atendente: '#257de0', lavador: '#f47230' };
-function cfgEscala() { const c = { desde: E.DESDE_PADRAO, sabados: {}, fechados: {}, ...(S.cfg.escala || {}) }; c.fechados = c.fechados || {}; return c; }
-function pessoasEscala() {
-  return S.funcs.filter((f) => f.ativo !== false).sort((a, b) => (a.funcao === b.funcao ? a.nome.localeCompare(b.nome) : a.funcao === 'atendente' ? -1 : 1))
-    .map((f) => ({ id: f.id, nome: f.nome, funcao: f.funcao || 'lavador', atende: f.funcao === 'atendente', escala: E.modelosDe(f), ajustado: E.temAjuste(f), temCadastro: !!(f.horario && f.horario.entrada) }));
+function cfgEscala() { const c = { desde: E.DESDE_PADRAO, sabados: {}, fechados: {}, funcionamento: {}, ...(S.cfg.escala || {}) }; c.fechados = c.fechados || {}; c.funcionamento = c.funcionamento || {}; return c; }
+function ctxEscala() {
+  const ce = cfgEscala();
+  const pessoas = S.funcs.filter((f) => f.ativo !== false).sort((a, b) => (a.funcao === b.funcao ? a.nome.localeCompare(b.nome) : a.funcao === 'atendente' ? -1 : 1)).map(E.pessoaDe);
+  return { ...ce, pessoas };
 }
-function svgSemana(pessoas, segunda, sabados, fechados = {}) {
-  const W = 360, L = 58, T0 = 390, T1 = 1230, k = (W - L - 4) / (T1 - T0), x = (m) => L + (m - T0) * k;
+function horarioEfetivo(f, de, ate) {
+  const ctx = ctxEscala(), p = ctx.pessoas.find((x) => x.id === f.id) || E.pessoaDe(f);
+  return { ...(f.horario || {}), calendario: E.calendario(p, de, ate, ctx) };
+}
+function resumoHorario(f) {
+  const dias = E.diasDoCadastro(f.horario);
+  const txt = E.DIAS.map(([d, n]) => { const t = E.turno(dias[d]); return t ? `${n} ${E.mh(t.e)}–${E.mh(t.s)}` : null; }).filter(Boolean);
+  return txt.length ? txt.join(' · ') : '';
+}
+function svgSemana(segunda, ctx) {
+  const pessoas = ctx.pessoas, W = 360, L = 58, T0 = 390, T1 = 1230, k = (W - L - 4) / (T1 - T0), x = (m) => L + (m - T0) * k;
   const RH = 13, GAP = 3, partes = []; let y = 14;
-  partes.push(`<g class="esc-leg"><rect x="${L}" y="2" width="9" height="9" rx="2" fill="${CORES_ESC.atendente}"/><text x="${L + 12}" y="10">atendente</text><rect x="${L + 72}" y="2" width="9" height="9" rx="2" fill="${CORES_ESC.lavador}"/><text x="${L + 84}" y="10">lavador</text><rect x="${L + 136}" y="2" width="9" height="9" fill="#d32f2f"/><text x="${L + 148}" y="10">ninguém</text><rect x="${L + 196}" y="2" width="9" height="9" fill="#f2a600"/><text x="${L + 208}" y="10">sem caixa</text></g>`);
+  partes.push(`<g><rect x="${L}" y="2" width="9" height="9" rx="2" fill="${CORES_ESC.atendente}"/><text x="${L + 12}" y="10">atendente</text><rect x="${L + 72}" y="2" width="9" height="9" rx="2" fill="${CORES_ESC.lavador}"/><text x="${L + 84}" y="10">lavador</text><rect x="${L + 136}" y="2" width="9" height="9" fill="#d32f2f"/><text x="${L + 148}" y="10">ninguém</text><rect x="${L + 196}" y="2" width="9" height="9" fill="#f2a600"/><text x="${L + 208}" y="10">sem caixa</text></g>`);
   for (const [d, nome] of E.DIAS) {
-    const iso = E.addDias(segunda, d - 1), [ini, fim] = E.FUNCIONAMENTO[d];
+    const iso = E.addDias(segunda, d - 1), fn = E.funcionamento(ctx, d);
     y += 8;
-    const topo = y;
     partes.push(`<text class="esc-dia" x="2" y="${y + 9}">${nome} ${iso.slice(8)}/${iso.slice(5, 7)}</text>`);
-    for (let h = 7; h <= 20; h++) partes.push(`<text class="esc-hora" x="${x(h * 60)}" y="${y + 9}" text-anchor="middle">${h % 2 ? '' : h}</text>`);
+    for (let h = 8; h <= 20; h += 2) partes.push(`<text class="esc-hora" x="${x(h * 60)}" y="${y + 9}" text-anchor="middle">${h}</text>`);
     y += 12;
-    if (fechados[iso]) { partes.push(`<text class="esc-folga" x="${x(ini) + 4}" y="${y + 9}">não abrimos</text>`); y += 14; continue; }
+    if (ctx.fechados[iso] || !fn) { partes.push(`<text class="esc-folga" x="${x(420) + 4}" y="${y + 6}">não abrimos</text>`); y += 10; continue; }
     const alturaDia = pessoas.length * (RH + GAP) + 10;
-    partes.push(`<rect x="${x(ini)}" y="${y - 1}" width="${(fim - ini) * k}" height="${alturaDia}" class="esc-aberto"/>`);
+    partes.push(`<rect x="${x(fn[0])}" y="${y - 1}" width="${(fn[1] - fn[0]) * k}" height="${alturaDia}" class="esc-aberto"/>`);
     for (let h = 8; h < 21; h += 2) partes.push(`<line x1="${x(h * 60)}" x2="${x(h * 60)}" y1="${y - 1}" y2="${y + alturaDia - 1}" class="esc-grade"/>`);
     for (const p of pessoas) {
-      const t = E.turnoNoDia(p, iso, sabados);
+      const { t, motivo } = E.diaDe(p, iso, ctx);
       partes.push(`<text class="esc-nome" x="2" y="${y + 10}">${esc(p.nome.split(' ')[0])}</text>`);
       if (t) {
-        const cor = CORES_ESC[p.atende ? 'atendente' : 'lavador'], tit = `${p.nome}: ${E.mh(t.e)}–${E.mh(t.s)}${t.a ? `, almoço ${E.mh(t.ai)}–${E.mh(t.ai + t.a)}` : ''} (${E.fmtH(t.trab)})`;
+        const cor = CORES_ESC[p.atende ? 'atendente' : 'lavador'], tit = `${p.nome}${motivo === 'cobertura' ? ' (cobrindo folga)' : ''}: ${E.mh(t.e)}–${E.mh(t.s)}${t.a ? `, intervalo ${E.mh(t.ai)}–${E.mh(t.ai + t.a)}` : ''} (${E.fmtH(t.trab)})`;
         const segs = t.a ? [[t.e, t.ai], [t.ai + t.a, t.s]] : [[t.e, t.s]];
-        for (const [a, b] of segs) if (b > a) partes.push(`<rect x="${x(a) + 1}" y="${y}" width="${Math.max(1, (b - a) * k - 2)}" height="${RH}" rx="3" fill="${cor}"><title>${esc(tit)}</title></rect>`);
-      } else partes.push(`<text class="esc-folga" x="${x(ini) + 4}" y="${y + 10}">folga</text>`);
+        for (const [a, b] of segs) if (b > a) partes.push(`<rect x="${x(a) + 1}" y="${y}" width="${Math.max(1, (b - a) * k - 2)}" height="${RH}" rx="3" fill="${cor}" ${motivo === 'cobertura' ? 'stroke="#191919" stroke-width="1"' : ''}><title>${esc(tit)}</title></rect>`);
+      } else partes.push(`<text class="esc-folga" x="${x(fn[0]) + 4}" y="${y + 10}">${motivo}</text>`);
       y += RH + GAP;
     }
-    for (const f of E.cobertura(pessoas, iso, sabados, fechados)) {
+    for (const f of E.cobertura(iso, ctx)) {
       const cor = !f.tot ? '#d32f2f' : !f.at ? '#f2a600' : ['#dbe8f8', '#b3cff0', '#7fb0e6', '#4a8fd9'][Math.min(3, f.tot - 1)];
-      partes.push(`<rect x="${x(f.m)}" y="${y + 1}" width="${15 * k}" height="7" fill="${cor}"><title>${E.mh(f.m)}: ${f.tot} pessoa(s), ${f.at} no caixa</title></rect>`);
+      partes.push(`<rect x="${x(f.m)}" y="${y + 1}" width="${15 * k}" height="7" fill="${cor}"><title>${E.mh(f.m)}: ${f.tot} pessoa(s), ${f.at} no caixa, ${f.lv} na lavagem</title></rect>`);
     }
     partes.push(`<text class="esc-nome" x="2" y="${y + 8}">cobertura</text>`);
     y += 12;
-    if (topo) { /* altura acumulada */ }
   }
   return `<svg viewBox="0 0 ${W} ${y + 4}" class="esc-svg" role="img" aria-label="Horários da semana de ${dataBR(segunda)}">${partes.join('')}</svg>`;
 }
 async function telaEscala(mk) {
-  const ce = cfgEscala(), pessoas = pessoasEscala(), ano = Number(mk.slice(0, 4));
+  const ctx = ctxEscala(), pessoas = ctx.pessoas, ano = Number(mk.slice(0, 4));
   const sabMes = E.sabadosDoAno(ano).filter((s) => s.startsWith(mk));
-  const segundas = []; { let d = E.segundaDe(`${mk}-01`); while (d.slice(0, 7) <= mk) { if (E.addDias(d, 5).slice(0, 7) === mk || d.slice(0, 7) === mk) segundas.push(d); d = E.addDias(d, 7); } }
-  if (!S.semEsc || !segundas.includes(S.semEsc)) S.semEsc = segundas[0];
-  const contAno = {}; for (const [sab, ids] of Object.entries(ce.sabados)) if (sab.startsWith(String(ano))) for (const id of ids) contAno[id] = (contAno[id] || 0) + 1;
-  const problemas = (iso) => { const f = E.cobertura(pessoas, iso, ce.sabados, ce.fechados); const z = E.buracos(f, (x) => !x.tot), c = E.buracos(f, (x) => x.tot && !x.at); return [...z.map((b) => `ninguém ${E.mh(b.ini)}–${E.mh(b.fim)}`), ...c.map((b) => `sem caixa ${E.mh(b.ini)}–${E.mh(b.fim)}`)]; };
+  const segundas = []; { let d = E.segundaDe(`${mk}-01`); while (d.slice(0, 7) <= mk) { segundas.push(d); d = E.addDias(d, 7); } }
+  if (!S.semEsc || !segundas.includes(S.semEsc)) S.semEsc = segundas.find((d) => d.slice(0, 7) === mk) || segundas[0];
+  const contAno = {}; for (const [sab, ids] of Object.entries(ctx.sabados)) if (sab.startsWith(String(ano))) for (const id of ids) contAno[id] = (contAno[id] || 0) + 1;
+  const problemas = (iso) => { const f = E.cobertura(iso, ctx); return [...E.buracos(f, (x) => !x.tot).map((b) => `ninguém ${E.mh(b.ini)}–${E.mh(b.fim)}`), ...E.buracos(f, (x) => x.tot && !x.at).map((b) => `sem caixa ${E.mh(b.ini)}–${E.mh(b.fim)}`)]; };
   const sabados = sabMes.map((sab) => {
-    const pr = problemas(sab);
-    if (ce.fechados[sab]) return `<div class="esc-sab fechado"><b>${sab.slice(8)}/${sab.slice(5, 7)}</b><span class="esc-chips"><button class="chip off" data-act="escFechado" data-dia="${sab}">🚫 Não abrimos</button></span><small>Toque para voltar a abrir neste sábado.</small></div>`;
-    return `<div class="esc-sab"><b>${sab.slice(8)}/${sab.slice(5, 7)}</b><span class="esc-chips">${pessoas.map((p) => `<button class="chip ${E.trabalhaSabado(p.id, sab, ce.sabados) ? 'on' : ''}" data-act="escSab" data-sab="${sab}" data-id="${p.id}">${esc(p.nome.split(' ')[0])}</button>`).join('')}<button class="chip" data-act="escFechado" data-dia="${sab}">Não abrimos</button></span>${pr.length ? `<small class="neg">⚠ ${pr.join(' · ')}</small>` : ''}</div>`;
+    if (ctx.fechados[sab]) return `<div class="esc-sab fechado"><b>${sab.slice(8)}/${sab.slice(5, 7)}</b><span class="esc-chips"><button class="chip off" data-act="escFechado" data-dia="${sab}">🚫 Não abrimos</button></span><small>Toque para voltar a abrir neste sábado.</small></div>`;
+    const pr = problemas(sab), folgas = pessoas.filter((p) => E.trabalhaSabado(p.id, sab, ctx.sabados)).map((p) => `${p.nome.split(' ')[0]} folga ${E.DIAS[p.folgaApos - 1][1].toLowerCase()} ${E.addDias(sab, p.folgaApos + 1).slice(8)}/${E.addDias(sab, p.folgaApos + 1).slice(5, 7)}`);
+    return `<div class="esc-sab"><b>${sab.slice(8)}/${sab.slice(5, 7)}</b><span class="esc-chips">${pessoas.map((p) => `<button class="chip ${E.trabalhaSabado(p.id, sab, ctx.sabados) ? 'on' : ''}" data-act="escSab" data-sab="${sab}" data-id="${p.id}">${esc(p.nome.split(' ')[0])}</button>`).join('')}<button class="chip" data-act="escFechado" data-dia="${sab}">Não abrimos</button></span>${folgas.length ? `<small>${esc(folgas.join(' · '))}</small>` : ''}${pr.length ? `<small class="neg">⚠ ${pr.join(' · ')}</small>` : ''}</div>`;
   }).join('');
   const semanaPr = []; for (let d = 1; d <= 6; d++) { const iso = E.addDias(S.semEsc, d - 1); for (const x of problemas(iso)) semanaPr.push(`${E.DIAS[d - 1][1]}: ${x}`); }
-  const horasSemana = pessoas.map((p) => { const mod = E.modeloDaSemana(p, S.semEsc, ce.sabados), c = E.conferirModelo(mod); return `<tr><td>${esc(p.nome)}<small>${E.trabalhaSabado(p.id, E.sabadoDe(S.semEsc), ce.sabados) ? 'semana com sábado' : 'semana sem sábado'}</small></td><td class="r ${c.total > E.LIMITE_SEMANA ? 'neg' : ''}">${E.fmtH(c.total)}</td></tr>`; }).join('');
-  const modelo = (p, qual) => {
-    const mod = (p.escala || {})[qual] || {}, c = E.conferirModelo(mod);
-    const inp = (d, campo, v, tipo = 'time') => `<input type="${tipo}" class="hora-in" data-escf="${p.id}" data-mod="${qual}" data-d="${d}" data-c="${campo}" value="${v ?? ''}" ${tipo !== 'time' ? 'inputmode="numeric" style="width:3.2rem"' : ''}>`;
-    return `<h4>${qual === 'sem' ? 'Semana sem sábado' : 'Semana com sábado'} <small class="${c.total > E.LIMITE_SEMANA ? 'neg' : ''}">${E.fmtH(c.total)} · ${c.dias} dias</small></h4>
-      <div class="rola"><table class="tab ponto-tab"><thead><tr><th></th><th>Entrada</th><th>Saída</th><th>Almoço</th><th>min</th><th class="r">Horas</th></tr></thead><tbody>
-      ${E.DIAS.map(([d, nome]) => { const x = mod[d] || {}, t = E.turno(x); return `<tr><td>${nome}</td><td>${inp(d, 'e', x.e)}</td><td>${inp(d, 's', x.s)}</td><td>${inp(d, 'ai', x.ai)}</td><td>${inp(d, 'a', x.a, 'text')}</td><td class="r">${t ? E.fmtH(t.trab) : 'folga'}</td></tr>`; }).join('')}
-      </tbody></table></div>${c.avisos.length ? `<p class="mini neg">⚠ ${c.avisos.join(' · ')}</p>` : ''}${qual === 'com' && c.total && c.total < E.LIMITE_SEMANA - 30 ? `<p class="mini">Faltam ${E.fmtH(E.LIMITE_SEMANA - c.total)} para 44h. Para compensar, aumente a saída em pelo menos ${Math.ceil((E.LIMITE_SEMANA - c.total) / Math.max(1, E.LIMITE_DIA - Math.max(...Object.values(mod).map((x) => (E.turno(x) || {}).trab || 0))))} dia(s) (máx. 10h por dia), ou deixe a diferença como está.</p>` : ''}`;
-  };
+  const proxSeg = E.addDias(S.semEsc, 7);
+  const horas = pessoas.map((p) => {
+    const a = E.conferirSemana(p, S.semEsc, ctx), b = E.conferirSemana(p, proxSeg, ctx), media = Math.round((a.total + b.total) / 2);
+    return `<tr><td>${esc(p.nome)}${a.avisos.length ? `<small class="neg">⚠ ${esc(a.avisos.join(' · '))}</small>` : ''}</td><td class="r ${a.total > E.LIMITE_SEMANA ? 'alerta' : ''}">${E.fmtH(a.total)}<small>${a.dias} dias</small></td><td class="r">${E.fmtH(b.total)}</td><td class="r ${media > E.LIMITE_SEMANA ? 'neg' : ''}">${E.fmtH(media)}</td></tr>`;
+  }).join('');
+  const fn = (d) => (ctx.funcionamento[d] || E.FUNC_PADRAO[d]);
   const corpo = `
   <p><a href="#/equipe" class="btn link">‹ Equipe</a></p>
   <div class="navdata"><a class="btn ic" href="#/escala/${somaMes(mk, -1)}">‹</a><b>Escala de ${nomeMes(mk)}</b><a class="btn ic" href="#/escala/${somaMes(mk, 1)}">›</a></div>
   <section class="card"><h3>Sábados do mês <small>toque no nome para marcar quem trabalha</small></h3>
     ${sabados || '<p class="mini">Sem sábados.</p>'}
-    <p class="mini">Sábados no ano: ${pessoas.map((p) => `${esc(p.nome.split(' ')[0])} ${contAno[p.id] || 0}`).join(' · ')}</p>
+    <p class="mini">Sábados no ano: ${pessoas.map((p) => `${esc(p.nome.split(' ')[0])} ${contAno[p.id] || 0}`).join(' · ')}. Quem trabalha no sábado folga na semana seguinte, no dia escolhido na ficha.</p>
   </section>
   <section class="card"><h3>Semana</h3>
     <div class="seg">${segundas.map((d) => `<button class="${d === S.semEsc ? 'on' : ''}" data-act="escSemana" data-d="${d}">${d.slice(8)}/${d.slice(5, 7)}</button>`).join('')}</div>
-    ${svgSemana(pessoas, S.semEsc, ce.sabados, ce.fechados)}
-    <div class="esc-chips"><small>Não abrimos (feriado):</small>${E.DIAS.slice(0, 5).map(([d, n]) => { const iso = E.addDias(S.semEsc, d - 1); return `<button class="chip ${ce.fechados[iso] ? 'on' : ''}" data-act="escFechado" data-dia="${iso}">${n} ${iso.slice(8)}/${iso.slice(5, 7)}</button>`; }).join('')}</div>
-    ${semanaPr.length ? `<p class="mini neg">⚠ ${semanaPr.join(' · ')}</p>` : '<p class="mini pos">✓ Horário de funcionamento coberto, com alguém no caixa o tempo todo.</p>'}
-    <table class="tab"><tbody>${horasSemana}</tbody></table>
-    <p class="mini">Seg a sex 7h–20h e sáb 9h30–15h30 (faixa clara). Toque numa barra para ver o horário. A escala vale a partir de <input type="date" data-esc-desde="1" value="${ce.desde}" class="hora-in" style="width:8.5rem">; antes disso o ponto usa o horário simples da ficha.</p>
+    ${svgSemana(S.semEsc, ctx)}
+    <div class="esc-chips"><small>Não abrimos (feriado):</small>${E.DIAS.slice(0, 5).map(([d, n]) => { const iso = E.addDias(S.semEsc, d - 1); return `<button class="chip ${ctx.fechados[iso] ? 'on' : ''}" data-act="escFechado" data-dia="${iso}">${n} ${iso.slice(8)}/${iso.slice(5, 7)}</button>`; }).join('')}</div>
+    ${semanaPr.length ? `<p class="mini neg">⚠ ${semanaPr.join(' · ')}</p>` : '<p class="mini pos">✓ Funcionamento coberto, com alguém no caixa o tempo todo.</p>'}
+    <div class="rola"><table class="tab"><thead><tr><th>Horas</th><th class="r">Esta semana</th><th class="r">Próxima</th><th class="r">Média</th></tr></thead><tbody>${horas}</tbody></table></div>
+    <p class="mini">A semana com sábado passa de 44h e a seguinte (com a folga) fica abaixo: o que vale é a média, compensada por acordo escrito (CCT cl. 27ª). Contorno preto na barra = horário de cobertura de folga.</p>
+  </section>
+  <section class="card"><h3>Horário de funcionamento</h3>
+    <div class="rola"><table class="tab"><thead><tr><th></th><th>Abre</th><th>Fecha</th></tr></thead><tbody>
+    ${E.DIAS.map(([d, n]) => `<tr><td>${n}</td><td><input type="time" class="hora-in" data-esc-fn="${d}" data-i="0" value="${fn(d)[0]}"></td><td><input type="time" class="hora-in" data-esc-fn="${d}" data-i="1" value="${fn(d)[1]}"></td></tr>`).join('')}
+    </tbody></table></div>
+    <p class="mini">A escala vale a partir de <input type="date" data-esc-desde="1" value="${ctx.desde}" class="hora-in" style="width:8.5rem">; antes disso não há rodízio nem folga de sábado.</p>
   </section>
   <section class="card"><h3>Rodízio dos sábados de ${ano}</h3>
-    <p class="mini">Gera a escala de sábados do ano inteiro, em ordem, a partir da data de início. Depois é só ajustar mês a mês acima.</p>
-    <div class="esc-chips">${pessoas.map((p) => `<label class="chk"><input type="checkbox" class="esc-rod" value="${p.id}" ${p.funcao !== 'atendente' ? 'checked' : ''}> ${esc(p.nome.split(' ')[0])}</label>`).join('')}</div>
-    <label>Pessoas por sábado<input id="esc-por" inputmode="numeric" value="1" style="width:4rem"></label>
+    <p class="mini">Gera os sábados do ano inteiro, em ordem, a partir da data de início, pulando os sábados em que não abrimos. Depois é só ajustar mês a mês.</p>
+    <div class="esc-chips">${pessoas.map((p) => `<label class="chk"><input type="checkbox" class="esc-rod" value="${p.id}" checked> ${esc(p.nome.split(' ')[0])}</label>`).join('')}</div>
+    <label>Pessoas por sábado<input id="esc-por" inputmode="numeric" value="2" style="width:4rem"></label>
     <button class="btn" data-act="escGerar" data-ano="${ano}">Gerar rodízio de ${ano}</button>
   </section>
-  <section class="card"><h3>Horários de cada um <small>dois modelos: semana com e sem sábado</small></h3>
-    <button class="btn link" data-act="escProposta">Usar a proposta 5x2 no lugar do cadastro</button>
-    <p class="mini">Os horários vêm do cadastro de cada funcionário (Equipe → ficha): entrada, saída e almoço de seg a sex, horário de sábado e o dia de folga na semana do sábado. Aqui você pode ajustar dia a dia.</p>
-    ${pessoas.map((p) => `<details class="cad"><summary>${esc(p.nome)} <small>${p.funcao}${p.ajustado ? ' · ajustado nesta tela' : p.temCadastro ? ' · do cadastro' : ' · <span class="neg">sem horário no cadastro</span>'}</small></summary>${modelo(p, 'sem')}${modelo(p, 'com')}<button class="btn link mini" data-act="escCopiar" data-id="${p.id}">copiar "sem sábado" para "com sábado"</button>${p.ajustado ? ` <button class="btn link mini" data-act="escCadastro" data-id="${p.id}">voltar aos horários do cadastro</button>` : ''}</details>`).join('')}
-  </section>
-  <section class="card"><details><summary><b>Como fica a compensação</b></summary>
-    <p class="mini">Na semana em que trabalha no sábado (9h30–15h30, 5h45 com pausa de 15 min), a pessoa folga um dia útil e faltam cerca de 3h para fechar 44h. Como a lei permite no máximo 10h por dia (8h + 2h), essa diferença não cabe num dia só: precisa ser espalhada em pelo menos 3 dias (na proposta, 4 dias de 9h33). Na semana sem sábado, 5 dias de 8h48. Faça um acordo de compensação por escrito com cada um (CCT cl. 27ª). O que passar disso vai para o banco de horas do ponto.</p>
-  </details></section>`;
+  <section class="card"><h3>Horários de cada um</h3>
+    <p class="mini">Os horários vêm do cadastro de cada funcionário, dia a dia (Equipe → ficha): entrada, saída e intervalo de segunda a sábado, o dia da folga depois do sábado trabalhado e o horário de quando cobre a folga de um colega.</p>
+    ${pessoas.map((p) => { const f = S.funcs.find((x) => x.id === p.id); const r = resumoHorario(f); return `<p><b>${esc(p.nome)}</b> <small>${p.funcao}</small><br><small>${r ? esc(r) : '<span class="neg">sem horário no cadastro</span>'} · folga após sábado: ${E.DIAS[p.folgaApos - 1][1].toLowerCase()}${p.cobertura && p.cobertura.e ? ` · cobertura ${esc(p.cobertura.e)}–${esc(p.cobertura.s)}` : ''}</small></p>`; }).join('')}
+    <a class="btn link" href="#/equipe">Editar na ficha (Equipe)</a>
+  </section>`;
   $app.innerHTML = moldura(corpo, 'Escala');
   S.ctxEscala = mk;
 }
@@ -1908,22 +1927,16 @@ $app.addEventListener('click', async (ev) => {
     }
     case 'escSemana': S.semEsc = el.dataset.d; telaEscala(S.ctxEscala); break;
     case 'escGerar': {
-      const ids = [...document.querySelectorAll('.esc-rod:checked')].map((x) => x.value), ano = el.dataset.ano, ce = cfgEscala();
+      const marcados = [...document.querySelectorAll('.esc-rod:checked')].map((x) => x.value), ano = el.dataset.ano, ce = cfgEscala();
+      // intercala as funções (atendente, lavador, atendente, lavador…) para cada sábado ter um de cada
+      const grupos = {}; for (const id of marcados) { const fn = (S.funcs.find((f) => f.id === id) || {}).funcao || 'lavador'; (grupos[fn] = grupos[fn] || []).push(id); }
+      const gs = Object.values(grupos), ids = []; for (let i = 0; i < Math.max(0, ...gs.map((g) => g.length)); i++) for (const g of gs) if (g[i]) ids.push(g[i]);
       if (!ids.length) { toast('Escolha quem entra no rodízio', true); break; }
       if (!confirm(`Gerar os sábados de ${ano} a partir de ${dataBR(ce.desde)}? Os sábados já marcados nesse período serão substituídos.`)) break;
       for (const k of Object.keys(ce.sabados)) if (k.startsWith(ano) && k >= ce.desde) delete ce.sabados[k];
       Object.assign(ce.sabados, E.gerarRodizio(Number(ano), ids, Math.max(1, num(document.getElementById('esc-por').value) || 1), ce.desde, ce.fechados));
       S.cfg.escala = ce; await salvarCfg(); agendarPortal(); toast('Rodízio gerado'); telaEscala(S.ctxEscala); break;
     }
-    case 'escProposta': {
-      const at = S.funcs.filter((f) => f.ativo !== false && f.funcao === 'atendente').map((f) => f.id), lv = S.funcs.filter((f) => f.ativo !== false && f.funcao !== 'atendente').map((f) => f.id);
-      if (!confirm('Preencher os horários de todos com a proposta 5x2? (substitui os horários da escala; a ficha e o ponto atual não mudam)')) break;
-      const pr = E.proposta(at, lv);
-      for (const f of S.funcs) if (pr[f.id]) { f.escala = pr[f.id]; await salvarFunc(f); }
-      agendarPortal(); toast('Proposta aplicada'); telaEscala(S.ctxEscala); break;
-    }
-    case 'escCadastro': { const f = S.funcs.find((x) => x.id === el.dataset.id); delete f.escala; await salvarFunc(f); agendarPortal(); toast('Voltou aos horários do cadastro'); telaEscala(S.ctxEscala); break; }
-    case 'escCopiar': { const f = S.funcs.find((x) => x.id === el.dataset.id), m = E.modelosDe(f), com = JSON.parse(JSON.stringify(m.sem)); for (let d = 1; d <= 6; d++) if (!com[d]) com[d] = { folga: true }; f.escala = { ...(f.escala || {}), com }; await salvarFunc(f); agendarPortal(); telaEscala(S.ctxEscala); break; }
     case 'baterPonto': await baterPonto(el.dataset.tipo, el); break;
     case 'portalMes': S.mkPortal = el.dataset.mk; telaFuncionario(); break;
     case 'sairFunc': await S.store.sair(); location.reload(); break;
@@ -2207,14 +2220,9 @@ $app.addEventListener('change', async (ev) => {
     if (k !== 'obs') { delete d.legado; delete d.premioLeg; S.abrirPlanilha = true; if (!d[k]) delete d[k]; }
     salvarMes(S.ctxDia.mk); if (k !== 'obs') redesenhar(() => telaDia(S.ctxDia.iso)); return;
   }
-  if (el.dataset.escf) {
-    const f = S.funcs.find((x) => x.id === el.dataset.escf), e = f.escala = f.escala || { sem: {}, com: {} };
-    const q = el.dataset.mod, d = el.dataset.d, c = el.dataset.c, atual = E.modelosDe(f)[q][d] || {};
-    const mod = e[q] = e[q] || {}, dia = mod[d] = { ...atual }; delete dia.folga;
-    if (el.value === '') delete dia[c]; else dia[c] = c === 'a' ? num(el.value) : el.value;
-    if (!dia.e && !dia.s) mod[d] = { folga: true };
-    else if (c === 'e' || c === 's') { if (dia.a == null && dia.e && dia.s && E.hm(dia.s) - E.hm(dia.e) > 360) dia.a = 60; }
-    await salvarFunc(f); agendarPortal(); status('Salvo ✓'); redesenhar(() => telaEscala(S.ctxEscala)); return;
+  if (el.dataset.escFn) {
+    const ce = cfgEscala(), d = el.dataset.escFn, cur = [...(ce.funcionamento[d] || E.FUNC_PADRAO[d])];
+    cur[+el.dataset.i] = el.value; ce.funcionamento[d] = cur; S.cfg.escala = ce; await salvarCfg(); agendarPortal(); status('Salvo ✓'); redesenhar(() => telaEscala(S.ctxEscala)); return;
   }
   if (el.dataset.escDesde) { const ce = cfgEscala(); ce.desde = el.value || E.DESDE_PADRAO; S.cfg.escala = ce; await salvarCfg(); agendarPortal(); toast('Salvo'); telaEscala(S.ctxEscala); return; }
   if (el.dataset.pontoCfg) {

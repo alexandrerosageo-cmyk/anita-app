@@ -1,4 +1,4 @@
-import { sabadoDe, turno as turnoEscala } from './escala.js';
+import { turno as turnoEscala, diasDoCadastro } from './escala.js';
 // Ponto virtual: marcações, horas trabalhadas, distância até o local de trabalho
 export const TIPOS = [
   ['entrada', 'Entrada'],
@@ -78,19 +78,16 @@ const dow = (iso) => new Date(iso + 'T12:00:00').getDay();
 export function expediente(h, iso) {
   h = { ...HORARIO_PADRAO, ...(h || {}) };
   const d = dow(iso);
+  if (h.calendario && Object.prototype.hasOwnProperty.call(h.calendario, iso)) return h.calendario[iso]; // escala calculada (rodízio, folgas, cobertura)
   if ((h.fechados || []).includes(iso)) return null; // dia em que não abrimos
-  const esc = h.escala;
-  if (esc && (esc.com || esc.sem) && iso >= (esc.desde || '0000')) {
-    const t = turnoEscala(((esc.sabados || []).includes(sabadoDe(iso)) ? esc.com : esc.sem || {})[d]);
-    return t ? { ini: t.e, fim: t.s, almoco: t.a, previsto: t.trab } : null;
-  }
+  if (h.dias && Object.keys(h.dias).length) { const t = turnoEscala(diasDoCadastro(h)[d]); return t ? { ini: t.e, fim: t.s, almoco: t.a, previsto: t.trab } : null; }
   if (d === 0) return null;
   const ini = hm(d === 6 ? h.sabEntrada : h.entrada), fim = hm(d === 6 ? h.sabSaida : h.saida);
   if (ini == null || fim == null || fim <= ini) return null;
   const almoco = d === 6 && fim - ini <= 360 ? 0 : Number(h.almoco) || 0;
   return { ini, fim, almoco, previsto: Math.max(0, fim - ini - almoco) };
 }
-export const temHorario = (h) => !!(h && ((h.entrada && h.saida) || (h.escala && (h.escala.com || h.escala.sem))));
+export const temHorario = (h) => !!(h && ((h.entrada && h.saida) || (h.dias && Object.keys(h.dias).length) || (h.calendario && Object.keys(h.calendario).length)));
 
 // os botões funcionam de (entrada − antes) até (saída + depois)
 export function janela(h, iso, jan) {
