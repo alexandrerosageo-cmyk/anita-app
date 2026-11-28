@@ -7,7 +7,7 @@ import * as P from './ponto.js';
 import { EMAIL_BACKUP } from './firebase-config.js';
 import { criarStore, salvarConfigFirebase, interpretarConfig, lerConfigFirebase, usarFirebasePadrao } from './store.js';
 
-const VERSAO = '2.18.0';
+const VERSAO = '2.19.0';
 const $app = document.getElementById('app');
 const S = { store: null, cfg: null, funcs: [], frota: [], meses: {}, tipoSel: 'paga', salvando: 0 };
 
@@ -773,6 +773,11 @@ async function telaEquipe(mk) {
           <label>Admissão<input type="date" name="admissao" value="${f.admissao || ''}"></label>
           <label>Desligamento<input type="date" name="desligamento" value="${f.desligamento || ''}"></label>
           <label>Chave PIX<input name="pix" value="${esc(f.pix || '')}"></label>
+          <label>Entrada (seg–sex)<input type="time" name="hEntrada" value="${(f.horario || {}).entrada || ''}"></label>
+          <label>Saída (seg–sex)<input type="time" name="hSaida" value="${(f.horario || {}).saida || ''}"></label>
+          <label>Almoço (minutos)<input name="hAlmoco" inputmode="numeric" value="${(f.horario || {}).almoco ?? 60}"></label>
+          <label>Entrada sábado<input type="time" name="hSabEntrada" value="${(f.horario || {}).sabEntrada || ''}"></label>
+          <label>Saída sábado<input type="time" name="hSabSaida" value="${(f.horario || {}).sabSaida || ''}"></label>
           <label class="chk"><input type="checkbox" name="ativo" ${f.ativo !== false ? 'checked' : ''}> Ativo</label>
         </div>
         <button class="btn grande">Salvar cadastro</button>
@@ -813,7 +818,9 @@ async function telaEquipe(mk) {
   document.querySelectorAll('.fFunc').forEach((fm) => fm.onsubmit = async (ev) => {
     ev.preventDefault(); const fd = new FormData(fm); const f = S.funcs.find((x) => x.id === fm.dataset.id);
     Object.assign(f, { nome: fd.get('nome').trim(), funcao: fd.get('funcao'), salario: num(fd.get('salario')), vtDia: num(fd.get('vtDia')), vtDiasPadrao: num(fd.get('vtDiasPadrao')) || null,
-      telefone: fd.get('telefone').trim(), pix: fd.get('pix').trim(), admissao: fd.get('admissao') || null, desligamento: fd.get('desligamento') || null, ativo: !!fd.get('ativo') });
+      telefone: fd.get('telefone').trim(), pix: fd.get('pix').trim(), admissao: fd.get('admissao') || null, desligamento: fd.get('desligamento') || null, ativo: !!fd.get('ativo'),
+      horario: { entrada: fd.get('hEntrada') || '', saida: fd.get('hSaida') || '', almoco: num(fd.get('hAlmoco')) || 0, sabEntrada: fd.get('hSabEntrada') || '', sabSaida: fd.get('hSabSaida') || '' } });
+    agendarPortal();
     await salvarFunc(f); toast('Cadastro salvo'); telaEquipe(mk);
   });
   document.querySelectorAll('.fFixo').forEach((fm) => fm.onsubmit = async (ev) => {
@@ -903,6 +910,10 @@ function valoresFunc(f, mk, M, ap, Mp) {
     descontos: (r.fixos || []).filter((x) => x.ativo && x.sinal !== '+').map((x) => ({ desc: x.desc, valor: x.valor })).concat((fo.descontos || []).filter((e) => Number(e.valor)).map((e) => ({ desc: e.desc, valor: Number(e.valor) }))),
     vt: r.vt, variavel: r.variavel, vtProx: vtProx.vt, pagarDia1: C.r2(r.variavel + vtProx.vt), diaPg: C.diaPagamento(mk),
     regraNova: !!ap.regraNova, carrosEquipe: ap.tot.contados, proxMeta: prox ? { carros: prox.min, valor: prox.valor } : null,
+    hoje: mk === mkDe(hojeISO()) ? (() => {
+      const iso = hojeISO(), p = C.premioDia((M.dias || {})[iso.slice(8)], iso, S.cfg);
+      return { dia: iso, contados: p.contados, premio: p.porPessoa, pct: p.faixa ? p.faixa.pct : null, prox: C.regraNova(iso, S.cfg) ? C.proximaFaixa(p.contados, iso, S.cfg) : null };
+    })() : null,
   };
 }
 async function publicarPortais(silencioso) {
@@ -916,7 +927,7 @@ async function publicarPortais(silencioso) {
   let n = 0;
   for (const fid of new Set(S.acessos.map((a) => a.funcId))) {
     const f = S.funcs.find((x) => x.id === fid); if (!f) continue;
-    const doc = { nome: f.nome, atualizado: new Date().toISOString(), meses: {} };
+    const doc = { nome: f.nome, horario: f.horario || null, atualizado: new Date().toISOString(), meses: {} };
     for (const mk of meses) doc.meses[mk] = valoresFunc(f, mk, dados[mk].M, dados[mk].ap, dados[mk].Mp);
     await S.store.set('portal', fid, doc); n++;
   }
@@ -927,24 +938,39 @@ let timerPortal = null;
 function agendarPortal() { if (!S.acessos || !S.acessos.length) return; clearTimeout(timerPortal); timerPortal = setTimeout(() => publicarPortais(true).catch(() => {}), 4000); }
 
 // ----- tela do administrador: #/ponto/AAAA-MM -----
+const pagoComoExtra = (M, fid, dia) => ((M.folha || {})[fid] || {}).extras && M.folha[fid].extras.some((e) => e.ponto === dia);
 async function telaPontoEquipe(mk) {
-  const local = await localTrabalho();
+  const local = await localTrabalho(), jan = { ...P.JANELA_PADRAO, ...local };
+  const M = await mes(mk);
   S.acessos = await S.store.list('equipeAcesso').catch(() => []);
   const funcs = S.funcs.filter((f) => f.ativo !== false).sort((a, b) => a.nome.localeCompare(b.nome));
   const [y, m] = mk.split('-').map(Number), ultimo = new Date(y, m, 0).getDate();
+  const hoje = hojeISO(), ateDia = mk === mkDe(hoje) ? Number(hoje.slice(8)) : mk < mkDe(hoje) ? ultimo : 0;
   const blocos = [];
   for (const f of funcs) {
-    const marcas = await S.store.listPonto(f.id, `${mk}-01`, `${mk}-${ultimo}`).catch(() => []);
-    const dias = P.porDia(marcas), total = dias.reduce((a, d) => a + d.minutos, 0);
-    const cel = (d, k) => { const x = d.por[k]; return x ? `<span class="${x.ok === false ? 'neg' : ''}" title="${x.manual ? 'lançado pelo administrador' : x.dist != null ? `${x.dist} m do local` : ''}">${P.horaDe(x.ts)}${x.manual ? '*' : x.ok === false ? '⚠' : ''}</span>` : '—'; };
-    blocos.push(`<section class="card" id="pt-${f.id}"><h3>${esc(f.nome)} <small>${dias.length} dias · ${P.fmtHoras(total)}</small></h3>
-      ${dias.length ? `<div class="rola"><table class="tab"><thead><tr><th>Dia</th><th>Entr.</th><th>Alm.</th><th>Volta</th><th>Saída</th><th class="r">Horas</th></tr></thead><tbody>
-      ${dias.map((d) => `<tr><td>${dataBR(d.dia).slice(0, 5)}</td>${P.TIPOS.map(([k]) => `<td>${cel(d, k)}</td>`).join('')}<td class="r">${P.fmtHoras(d.minutos)}</td></tr>`).join('')}
-      </tbody></table></div>
-      <details><summary class="mini">Corrigir marcações</summary>
-        ${dias.map((d) => d.marcas.map((x) => `<div class="item-folha"><span>${dataBR(d.dia).slice(0, 5)}</span><span class="fixo-desc">${P.horaDe(x.ts)} · ${P.NOME_TIPO[x.tipo] || x.tipo}${x.manual ? ' (manual)' : x.dist != null ? ` · ${x.dist} m` : ''}</span><button class="x" data-act="delMarca" data-f="${f.id}" data-id="${x.id}">✕</button></div>`).join('')).join('')}
-      </details>` : '<p class="mini">Nenhuma marcação neste mês.</p>'}
-      <form class="fMarca linha" data-f="${f.id}"><input type="date" name="dia" value="${mk === mkDe(hojeISO()) ? hojeISO() : mk + '-01'}" required><select name="tipo">${P.TIPOS.map(([k, t]) => `<option value="${k}">${t}</option>`).join('')}</select><input type="time" name="hora" required><button class="btn">+ lançar</button></form>
+    const h = f.horario || {}, temH = P.temHorario(h);
+    const marcas = await S.store.listPonto(f.id, `${mk}-01`, `${mk}-${C.pad(ultimo)}`).catch(() => []);
+    const porData = Object.fromEntries(P.porDia(marcas).map((d) => [d.dia, d]));
+    const linhas = [];
+    for (let d = 1; d <= ateDia; d++) {
+      const iso = `${mk}-${C.pad(d)}`, dd = porData[iso] || { dia: iso, por: {}, marcas: [], minutos: 0 };
+      if (!P.expediente(h, iso) && !dd.marcas.length) continue;
+      const s = P.saldoDia(dd, h), pago = pagoComoExtra(M, f.id, iso);
+      linhas.push({ iso, dd, ...s, pago });
+    }
+    const trab = linhas.reduce((a, l) => a + l.dd.minutos, 0), prev = linhas.reduce((a, l) => a + l.previsto, 0);
+    const banco = linhas.filter((l) => !l.pago && l.dd.marcas.length).reduce((a, l) => a + l.saldo, 0);
+    const pagoR = linhas.filter((l) => l.pago).reduce((a, l) => a + (((M.folha[f.id].extras.find((e) => e.ponto === l.iso)) || {}).valor || 0), 0);
+    const cel = (l, k) => { const x = l.dd.por[k]; return `<input type="time" class="hora-in ${x && x.ok === false ? 'neg' : ''} ${x && x.manual ? 'manual' : ''}" data-pm="${f.id}" data-dia="${l.iso}" data-tipo="${k}" data-id="${x ? x.id : ''}" value="${x ? P.horaDe(x.ts) : ''}" title="${x ? (x.manual ? 'ajustado pelo administrador' : x.dist != null ? `${x.dist} m do local` : '') : 'sem marcação'}">`; };
+    blocos.push(`<section class="card" id="pt-${f.id}"><h3>${esc(f.nome)} <small>${temH ? `${h.entrada}–${h.saida}${h.almoco ? ` · almoço ${h.almoco} min` : ''}${h.sabEntrada ? ` · sáb ${h.sabEntrada}–${h.sabSaida}` : ''}` : '<span class="neg">sem horário: cadastre na ficha (Equipe)</span>'}</small></h3>
+      <div class="kpis"><div class="kpi"><small>Trabalhado</small><b>${P.fmtHoras(trab)}</b><small>previsto ${P.fmtHoras(prev)}</small></div>
+        <div class="kpi"><small>Banco de horas</small><b class="${banco > 0 ? 'pos' : banco < 0 ? 'neg' : ''}">${P.fmtSaldo(banco)}</b><small>no mês</small></div>
+        <div class="kpi"><small>Pago como extra</small><b>${brl(pagoR)}</b></div></div>
+      ${linhas.length ? `<div class="rola"><table class="tab ponto-tab"><thead><tr><th>Dia</th><th>Entr.</th><th>Alm.</th><th>Volta</th><th>Saída</th><th class="r">Trab.</th><th class="r">Saldo</th><th>Extra</th></tr></thead><tbody>
+      ${linhas.map((l) => `<tr class="${l.pago ? 'pago' : ''}"><td>${l.iso.slice(8)}/${l.iso.slice(5, 7)}<small>${['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'][new Date(l.iso + 'T12:00').getDay()]}</small></td>${P.TIPOS.map(([k]) => `<td>${cel(l, k)}</td>`).join('')}
+        <td class="r">${P.fmtHoras(l.dd.minutos)}</td><td class="r ${l.saldo > 0 ? 'pos' : l.saldo < 0 ? 'neg' : ''}">${l.dd.marcas.length ? P.fmtSaldo(l.saldo) : '—'}</td>
+        <td>${l.saldo > 0 || l.pago ? `<label class="chk"><input type="checkbox" data-pextra="${f.id}" data-dia="${l.iso}" data-min="${Math.max(0, l.saldo)}" ${l.pago ? 'checked' : ''}> ${l.pago ? 'pago' : brl(P.valorExtra(l.saldo, f.salario))}</label>` : ''}</td></tr>`).join('')}
+      </tbody></table></div>` : '<p class="mini">Nenhum dia de expediente neste mês até hoje.</p>'}
     </section>`);
   }
   const ac = (f) => S.acessos.find((a) => a.funcId === f.id);
@@ -952,27 +978,33 @@ async function telaPontoEquipe(mk) {
   <p><a href="#/equipe" class="btn link">‹ Equipe</a></p>
   <div class="navdata"><a class="btn ic" href="#/ponto/${somaMes(mk, -1)}">‹</a><b>Ponto de ${nomeMes(mk)}</b><a class="btn ic" href="#/ponto/${somaMes(mk, 1)}">›</a></div>
   ${blocos.join('')}
-  <p class="mini">* lançado à mão · ⚠ marcado fora do local (com a distância na correção).</p>
-  <section class="card"><h3>Local de trabalho <small>o ponto só é aceito dentro do raio</small></h3>
-    <p>${local.lat != null ? `Definido em ${local.lat.toFixed(5)}, ${local.lng.toFixed(5)} · <a href="https://maps.google.com/?q=${local.lat},${local.lng}" target="_blank" rel="noopener">ver no mapa</a>` : '<b class="neg">Ainda não definido: os funcionários não conseguem bater o ponto.</b>'}</p>
-    <label>Raio aceito (metros)<input id="pt-raio" data-ponto-raio="1" inputmode="numeric" value="${local.raio}"></label>
+  <p class="mini">Toque num horário para corrigir (apagar o campo remove a marcação). Em vermelho: marcado fora do local. Saldo positivo vai para o banco de horas; marque "Extra" para pagar aquele dia como hora extra na folha do mês (50% nas 2 primeiras horas, 100% nas demais; hora = salário ÷ 220).</p>
+  <section class="card"><h3>Local de trabalho e horário dos botões</h3>
+    <p>${local.lat != null ? `Local definido em ${local.lat.toFixed(5)}, ${local.lng.toFixed(5)} · <a href="https://maps.google.com/?q=${local.lat},${local.lng}" target="_blank" rel="noopener">ver no mapa</a>` : '<b class="neg">Local ainda não definido: os funcionários não conseguem bater o ponto.</b>'}</p>
     <button class="btn" data-act="pontoLocalAqui">📍 Usar minha localização atual (estando no estacionamento)</button>
+    <div class="grade-folha">
+      <label>Raio aceito (m)<input id="pt-raio" data-ponto-cfg="raio" inputmode="numeric" value="${local.raio}"></label>
+      <label>Liberar antes da entrada (min)<input id="pt-antes" data-ponto-cfg="antes" inputmode="numeric" value="${jan.antes}"></label>
+      <label>Até depois da saída (min)<input id="pt-depois" data-ponto-cfg="depois" inputmode="numeric" value="${jan.depois}"></label>
+    </div>
+    <p class="mini">Os botões só funcionam no local e dentro do horário de cada funcionário (cadastrado na ficha, em Equipe), com essas folgas.</p>
   </section>
   <section class="card"><h3>Acesso dos funcionários <small>cada um entra com usuário e senha</small></h3>
     ${funcs.map((f) => { const a = ac(f); return a
       ? `<div class="item-folha"><span>✅</span><span class="fixo-desc"><b>${esc(f.nome)}</b> · usuário <b>${esc(a.usuario)}</b></span><button class="btn link mini perigo" data-act="removerAcesso" data-uid="${a.id}">remover</button></div>`
       : `<form class="fAcesso linha" data-f="${f.id}"><b>${esc(f.nome)}</b><input name="usuario" value="${P.slug(f.nome.split(' ')[0])}" placeholder="usuário" required><input name="senha" placeholder="senha (6+)" minlength="6" required><button class="btn">Criar acesso</button></form>`; }).join('')}
-    <p class="mini">O funcionário abre o mesmo endereço do app e entra com o usuário e a senha. Ele vê só o próprio ponto e os próprios valores (salário, prêmio, extras, descontos, VT e o que recebe no dia 1º). Anote a senha e entregue a ele; depois ele pode trocar.</p>
-    <button class="btn" data-act="publicarPortal">🔄 Atualizar agora os valores no app dos funcionários</button>
-    <p class="mini">Os valores também são atualizados sozinhos sempre que você salva um dia ou a folha.</p>
+    <p class="mini">O funcionário abre o mesmo endereço do app e entra com usuário e senha. Ele vê só os botões do ponto, os carros do dia, a comissão e quanto falta para as metas.</p>
+    <button class="btn" data-act="publicarPortal">🔄 Atualizar agora o app dos funcionários</button>
+    <p class="mini">Atualiza sozinho sempre que você salva um dia ou a folha.</p>
   </section>
   <section class="card"><details><summary><b>Regras de segurança do Firebase</b> <small>passo obrigatório, uma vez</small></summary>
-    <p class="mini">Para os funcionários entrarem sem ver os dados da empresa, copie as regras abaixo e cole no Firebase: console.firebase.google.com → projeto → Firestore Database → Regras → Publicar.</p>
+    <p class="mini">Copie e cole no Firebase: console.firebase.google.com → projeto → Firestore Database → Regras → Publicar.</p>
     <textarea id="regrasFs" rows="10" style="width:100%;font-family:monospace;font-size:.7rem">${esc(REGRAS_FIRESTORE((S.store.usuario() || {}).email || 'SEU_EMAIL@gmail.com'))}</textarea>
     <button class="btn" data-act="copiarRegras">📋 Copiar regras</button>
   </details></section>
-  <p class="mini">Controle interno de jornada. Empresas com até 20 empregados não são obrigadas a ter ponto; se quiserem usar como registro oficial (REP-P), confirmem com o contador.</p>`;
+  <p class="mini">Controle interno de jornada. Empresas com até 20 empregados não são obrigadas a ter ponto; para usar como registro oficial (REP-P), confirmem com o contador. Banco de horas precisa de acordo escrito com o funcionário (CCT, cl. 27ª: compensação em até 360 dias).</p>`;
   $app.innerHTML = moldura(corpo, 'Ponto da equipe');
+  S.ctxPonto = mk;
   document.querySelectorAll('.fAcesso').forEach((fm) => fm.onsubmit = async (ev) => {
     ev.preventDefault();
     const fd = new FormData(fm), f = S.funcs.find((x) => x.id === fm.dataset.f);
@@ -990,13 +1022,6 @@ async function telaPontoEquipe(mk) {
       toast(/email-already-in-use/.test(e.code || e.message) ? 'Esse usuário já existe. Use outro (ex.: cesar2).' : /operation-not-allowed/.test(e.code || '') ? 'Ative o login por e-mail/senha no Firebase (Authentication).' : 'Não consegui criar: ' + e.message, true);
     }
   });
-  document.querySelectorAll('.fMarca').forEach((fm) => fm.onsubmit = async (ev) => {
-    ev.preventDefault();
-    const fd = new FormData(fm), dia = fd.get('dia'), [hh, mi] = String(fd.get('hora')).split(':').map(Number);
-    const [yy, mm, dd] = dia.split('-').map(Number), ts = new Date(yy, mm - 1, dd, hh, mi).getTime();
-    await S.store.addPonto(fm.dataset.f, { tipo: fd.get('tipo'), dia, manual: true, por: (S.store.usuario() || {}).email || '' }, ts);
-    toast('Marcação lançada'); telaPontoEquipe(mk);
-  });
 }
 
 // ----- app do funcionário -----
@@ -1006,49 +1031,46 @@ async function iniciarFuncionario(perfil) {
   await telaFuncionario();
 }
 async function telaFuncionario(msg) {
-  const pf = S.perfil, hoje = hojeISO(), mk = mkDe(hoje);
-  const [y, m] = mk.split('-').map(Number), ultimo = new Date(y, m, 0).getDate();
-  let marcas = [], portal = null, erro = '';
-  try { marcas = await S.store.listPonto(pf.funcId, `${somaMes(mk, -1)}-01`, `${mk}-${ultimo}`); } catch (e) { erro = ehPermissao(e) ? 'Seu acesso ainda não foi liberado nas regras do sistema. Avise o Alexandre.' : e.message; }
-  try { portal = await S.store.get('portal', pf.funcId); } catch (e) { /* sem valores publicados */ }
-  const dias = P.porDia(marcas), hojeD = dias.find((d) => d.dia === hoje) || { por: {}, marcas: [] };
-  const prox = P.proxima(hojeD.por);
-  const doMes = dias.filter((d) => d.dia.startsWith(mk)), totalMes = doMes.reduce((a, d) => a + d.minutos, 0);
-  S.mkPortal = S.mkPortal && portal && portal.meses && portal.meses[S.mkPortal] ? S.mkPortal : mk;
-  const v = portal && portal.meses ? portal.meses[S.mkPortal] : null;
-  const linha = (t, val, cls = '') => `<tr class="${cls}"><td>${t}</td><td class="r">${val}</td></tr>`;
-  const valores = v ? `
-    <div class="seg">${Object.keys(portal.meses).sort().map((k) => `<button class="${k === S.mkPortal ? 'on' : ''}" data-act="portalMes" data-mk="${k}">${nomeMes(k)}</button>`).join('')}</div>
-    <table class="tab"><tbody>
-      ${linha(`Salário <small>${v.diasTrab} dias</small>`, brl(v.salario))}
-      ${linha(`Prêmio${S.mkPortal === mk ? ' <small>até agora, o mês não acabou</small>' : ''}${v.regraNova && v.bonus ? `<small>diário ${brl(v.premioDiario)} + bônus ${brl(v.bonus)}</small>` : ''}`, brl(v.premio))}
-      ${v.extras.map((e) => linha(`+ ${esc(e.desc || 'Extra')}`, brl(e.valor))).join('')}
-      ${v.descontos.map((e) => linha(`− ${esc(e.desc || 'Desconto')}`, '−' + brl(e.valor))).join('')}
-      ${linha(`VT do mês`, brl(v.vt))}
-      ${linha(`<b>No dia ${dataBR(v.diaPg).slice(0, 5)} você recebe</b><small>prêmio, extras e descontos + VT do mês seguinte (${brl(v.vtProx)})</small>`, `<b>${brl(v.pagarDia1)}</b>`, 'tot')}
-    </tbody></table>
-    <p class="mini">Dias trabalhados ${v.trabalhou} · faltas ${v.faltas}${v.justificadas ? ` · justificadas ${v.justificadas}` : ''}${v.presenca != null ? ` · presença ${v.presenca}%` : ''}.${v.regraNova ? ` A equipe fez ${v.carrosEquipe} carros${v.proxMeta ? `; faltam ${v.proxMeta.carros - v.carrosEquipe} para o bônus de ${brl(v.proxMeta.valor)}` : ''}.` : ''}</p>
-    <p class="mini">Atualizado em ${new Date(portal.atualizado).toLocaleString('pt-BR').slice(0, 17)}. O salário é pago à parte. Dúvidas, fale com o Alexandre.</p>`
-    : '<p class="mini">Seus valores ainda não foram publicados.</p>';
-  $app.innerHTML = `<header class="topo"><div><b>Olá, ${esc(pf.nome || (portal && portal.nome) || '')}</b><small>Estacionamento Anita</small></div><span class="topo-dir"><button class="btn link claro" data-act="sairFunc">Sair</button></span></header>
+  const pf = S.perfil, hoje = hojeISO();
+  let marcas = [], portal = null, local = null, erro = '';
+  try { marcas = await S.store.listPonto(pf.funcId, hoje, hoje); } catch (e) { erro = ehPermissao(e) ? 'Seu acesso ainda não foi liberado. Avise o Alexandre.' : e.message; }
+  try { portal = await S.store.get('portal', pf.funcId); } catch (e) { /* ainda não publicado */ }
+  try { local = await localTrabalho(); } catch (e) { /* sem local */ }
+  const d = P.porDia(marcas)[0] || { por: {} }, prox = P.proxima(d.por);
+  const h = portal && portal.horario, jan = P.janela(h, hoje, local), agora = Date.now();
+  const dentro = jan && agora >= jan.de && agora <= jan.ate;
+  const aviso = !P.temHorario(h) ? 'Seu horário ainda não foi cadastrado. Avise o Alexandre.'
+    : !jan ? 'Hoje não há expediente no seu horário.'
+      : !dentro ? `Os botões funcionam hoje das ${P.horaDe(jan.de)} às ${P.horaDe(jan.ate)}.` : '';
+  const botao = ([k, t]) => {
+    const feito = d.por[k], pode = !feito && dentro && (k === prox || (k === 'saida' && prox === 'almoco'));
+    return `<button class="pbtn ${feito ? 'feito' : ''} ${k === prox && dentro ? 'prox' : ''}" data-act="baterPonto" data-tipo="${k}" ${pode ? '' : 'disabled'}><span>${t}</span><b>${feito ? P.horaDe(feito.ts) : '--:--'}</b></button>`;
+  };
+  const v = portal && portal.meses && portal.meses[mkDe(hoje)], hj = v && v.hoje && v.hoje.dia === hoje ? v.hoje : null;
+  const comissao = v ? `
+    <div class="kpis">
+      <div class="kpi"><small>Carros hoje</small><b>${hj ? hj.contados : 0}</b><small>equipe</small></div>
+      <div class="kpi"><small>Comissão hoje</small><b>${brl(hj ? hj.premio : 0)}</b>${hj && hj.pct ? `<small>${String(hj.pct).replace('.', ',')}% da base</small>` : ''}</div>
+    </div>
+    <p class="meta-falta">${hj && hj.prox ? `🎯 Faltam <b>${hj.prox.faltam} carro${hj.prox.faltam > 1 ? 's' : ''}</b> hoje para a comissão subir para <b>${String(hj.prox.pct).replace('.', ',')}%</b>.` : v.regraNova ? '🏆 Meta máxima do dia atingida!' : ''}</p>
+    <div class="kpis">
+      <div class="kpi"><small>Carros no mês</small><b>${v.carrosEquipe}</b><small>equipe</small></div>
+      <div class="kpi"><small>Comissão do mês</small><b>${brl(v.premio)}</b><small>até agora</small></div>
+    </div>
+    <p class="meta-falta">${v.proxMeta ? `🎯 Faltam <b>${v.proxMeta.carros - v.carrosEquipe} carros</b> no mês para o bônus de <b>${brl(v.proxMeta.valor)}</b>.` : v.regraNova ? '🏆 Bônus mensal máximo atingido!' : ''}</p>
+    <p class="mini">Atualizado às ${new Date(portal.atualizado).toLocaleTimeString('pt-BR').slice(0, 5)} de ${new Date(portal.atualizado).toLocaleDateString('pt-BR').slice(0, 5)}.</p>`
+    : '<p class="mini">Os números do dia ainda não foram publicados.</p>';
+  $app.innerHTML = `<header class="topo"><div><b>Olá, ${esc(pf.nome || (portal && portal.nome) || '')}</b><small>${dataBR(hoje)}${jan ? ` · expediente ${P.minParaHora(jan.exp.ini)}–${P.minParaHora(jan.exp.fim)}` : ''}</small></div><span class="topo-dir"><button class="btn link claro" data-act="sairFunc">Sair</button></span></header>
   <main class="func-app">
-    <section class="card ponto-hoje"><h3>Ponto de hoje <small>${dataBR(hoje)}</small></h3>
+    <section class="card">
       ${erro ? `<p class="erro">${esc(erro)}</p>` : ''}${msg ? `<p class="${msg.erro ? 'erro' : 'ok'}">${esc(msg.txt)}</p>` : ''}
-      <div class="marcas-hoje">${P.TIPOS.map(([k, t]) => `<div class="${hojeD.por[k] ? 'feita' : ''}"><small>${t}</small><b>${hojeD.por[k] ? P.horaDe(hojeD.por[k].ts) : '--:--'}</b></div>`).join('')}</div>
-      ${prox ? `<button class="btn grande bater" data-act="baterPonto" data-tipo="${prox}">🕒 Registrar ${P.NOME_TIPO[prox].toLowerCase()}</button>
-        ${prox === 'almoco' ? '<button class="btn link" data-act="baterPonto" data-tipo="saida">Sair sem intervalo de almoço</button>' : ''}`
-        : '<p class="ok">Jornada de hoje encerrada. Bom descanso!</p>'}
-      <p class="mini">O ponto só vale no estacionamento: o app confere a sua localização no momento da marcação.</p>
+      <div class="pbotoes">${P.TIPOS.map(botao).join('')}</div>
+      ${aviso ? `<p class="mini">${esc(aviso)}</p>` : '<p class="mini">O ponto só é aceito no estacionamento.</p>'}
     </section>
-    <section class="card"><h3>Meus valores</h3>${valores}</section>
-    <section class="card"><h3>Meu ponto <small>${nomeMes(mk)} · ${P.fmtHoras(totalMes)}</small></h3>
-      ${dias.length ? `<div class="rola"><table class="tab"><thead><tr><th>Dia</th><th>Entr.</th><th>Alm.</th><th>Volta</th><th>Saída</th><th class="r">Horas</th></tr></thead><tbody>
-      ${dias.map((d) => `<tr><td>${dataBR(d.dia).slice(0, 5)}</td>${P.TIPOS.map(([k]) => `<td>${d.por[k] ? P.horaDe(d.por[k].ts) : '—'}</td>`).join('')}<td class="r">${P.fmtHoras(d.minutos)}</td></tr>`).join('')}
-      </tbody></table></div>` : '<p class="mini">Nenhuma marcação ainda.</p>'}
-    </section>
-    <section class="card"><details><summary>Trocar minha senha</summary>
-      <form id="fSenha"><label>Nova senha (6+)<input type="password" name="senha" minlength="6" required autocomplete="new-password"></label><button class="btn">Trocar senha</button></form>
-    </details></section>
+    <section class="card">${comissao}</section>
+    <details class="mini senha"><summary>Trocar minha senha</summary>
+      <form id="fSenha" class="linha"><input type="password" name="senha" minlength="6" required autocomplete="new-password" placeholder="nova senha (6+)"><button class="btn">Trocar</button></form>
+    </details>
   </main>`;
   const fs = document.getElementById('fSenha');
   if (fs) fs.onsubmit = async (ev) => {
@@ -1058,9 +1080,11 @@ async function telaFuncionario(msg) {
   };
 }
 async function baterPonto(tipo, btn) {
-  if (btn) { btn.disabled = true; btn.textContent = '📍 Conferindo a localização…'; }
+  if (btn) { btn.disabled = true; btn.querySelector('b').textContent = '📍…'; }
   try {
-    const [pos, local] = await Promise.all([pegarPosicao(), localTrabalho()]);
+    const [pos, local, portal] = await Promise.all([pegarPosicao(), localTrabalho(), S.store.get('portal', S.perfil.funcId).catch(() => null)]);
+    const jan = P.janela(portal && portal.horario, hojeISO(), local), agora = Date.now();
+    if (!jan || agora < jan.de || agora > jan.ate) return telaFuncionario({ erro: true, txt: 'Fora do seu horário de trabalho.' });
     const ck = P.noLocal(pos, local);
     if (!ck.ok) return telaFuncionario({ erro: true, txt: ck.motivo || `Você está a ${ck.dist} m do estacionamento (precisão do GPS ${ck.acc} m). O ponto só pode ser registrado no local de trabalho.` });
     await S.store.addPonto(S.perfil.funcId, { tipo, dia: hojeISO(), lat: pos.lat, lng: pos.lng, acc: Math.round(pos.acc), dist: ck.dist, ok: true, manual: false });
@@ -2052,7 +2076,31 @@ $app.addEventListener('change', async (ev) => {
     if (k !== 'obs') { delete d.legado; delete d.premioLeg; S.abrirPlanilha = true; if (!d[k]) delete d[k]; }
     salvarMes(S.ctxDia.mk); if (k !== 'obs') redesenhar(() => telaDia(S.ctxDia.iso)); return;
   }
-  if (el.dataset.pontoRaio) { const loc = await localTrabalho(); await S.store.set('config', 'local', { ...loc, raio: Math.max(30, num(el.value) || 150) }); toast('Raio salvo'); return; }
+  if (el.dataset.pontoCfg) {
+    const k = el.dataset.pontoCfg, loc = await localTrabalho(), v = num(el.value);
+    loc[k] = k === 'raio' ? Math.max(30, v || 150) : Math.max(0, v); await S.store.set('config', 'local', loc); toast('Salvo'); return;
+  }
+  if (el.dataset.pm) {
+    const fid = el.dataset.pm, dia = el.dataset.dia, id = el.dataset.id;
+    try {
+      if (!el.value) { if (id) await S.store.delPonto(fid, id); }
+      else {
+        const [hh, mi] = el.value.split(':').map(Number), [yy, mm, dd] = dia.split('-').map(Number), ts = new Date(yy, mm - 1, dd, hh, mi).getTime();
+        const por = (S.store.usuario() || {}).email || '';
+        if (id) await S.store.updPonto(fid, id, { manual: true, por }, ts);
+        else await S.store.addPonto(fid, { tipo: el.dataset.tipo, dia, manual: true, por }, ts);
+      }
+      status('Salvo ✓'); redesenhar(() => telaPontoEquipe(S.ctxPonto));
+    } catch (e) { toast('Não consegui salvar: ' + e.message, true); }
+    return;
+  }
+  if (el.dataset.pextra) {
+    const fid = el.dataset.pextra, dia = el.dataset.dia, mk = mkDe(dia), M = await mes(mk), f = S.funcs.find((x) => x.id === fid);
+    const fo = (M.folha = M.folha || {})[fid] = (M.folha || {})[fid] || {}; fo.extras = (fo.extras || []).filter((e) => e.ponto !== dia);
+    if (el.checked) { const min = Number(el.dataset.min) || 0; fo.extras.push({ desc: `Horas extras ${dia.slice(8)}/${dia.slice(5, 7)} (${P.fmtHoras(min)})`, valor: P.valorExtra(min, f.salario), ponto: dia }); }
+    M.folhaApp = true; salvarMes(mk); await gravarMes(mk).catch(() => {});
+    redesenhar(() => telaPontoEquipe(S.ctxPonto)); return;
+  }
   if (el.dataset.cct || el.dataset.cctp) {
     const c = S.cfg.cct = S.cfg.cct || {};
     if (el.dataset.cct) {

@@ -66,3 +66,44 @@ export function proxima(por) {
   if (!por.volta) return 'volta';
   return 'saida';
 }
+
+// ----- horários de trabalho, janela dos botões e banco de horas -----
+export const HORARIO_PADRAO = { entrada: '', saida: '', almoco: 60, sabEntrada: '', sabSaida: '' };
+export const JANELA_PADRAO = { antes: 15, depois: 120 };
+const hm = (s) => { const [h, m] = String(s || '').split(':').map(Number); return Number.isFinite(h) ? h * 60 + (m || 0) : null; };
+const dow = (iso) => new Date(iso + 'T12:00:00').getDay();
+
+// expediente previsto do dia: {ini, fim, almoco} em minutos do dia, ou null (folga)
+export function expediente(h, iso) {
+  h = { ...HORARIO_PADRAO, ...(h || {}) };
+  const d = dow(iso);
+  if (d === 0) return null;
+  const ini = hm(d === 6 ? h.sabEntrada : h.entrada), fim = hm(d === 6 ? h.sabSaida : h.saida);
+  if (ini == null || fim == null || fim <= ini) return null;
+  const almoco = d === 6 && fim - ini <= 360 ? 0 : Number(h.almoco) || 0;
+  return { ini, fim, almoco, previsto: Math.max(0, fim - ini - almoco) };
+}
+export const temHorario = (h) => !!(h && h.entrada && h.saida);
+
+// os botões funcionam de (entrada − antes) até (saída + depois)
+export function janela(h, iso, jan) {
+  const e = expediente(h, iso); if (!e) return null;
+  jan = { ...JANELA_PADRAO, ...(jan || {}) };
+  const [y, m, d] = iso.split('-').map(Number), base = new Date(y, m - 1, d).getTime();
+  return { de: base + (e.ini - Number(jan.antes || 0)) * 60000, ate: base + (e.fim + Number(jan.depois || 0)) * 60000, exp: e };
+}
+export const minParaHora = (min) => `${p2(Math.floor(min / 60))}:${p2(min % 60)}`;
+
+// saldo do dia = trabalhado − previsto (positivo vai para o banco de horas)
+export function saldoDia(d, h) {
+  const e = expediente(h, d.dia), previsto = e ? e.previsto : 0;
+  return { previsto, saldo: d.minutos - previsto };
+}
+export const fmtSaldo = (min) => (min ? `${min > 0 ? '+' : '−'}${fmtHoras(Math.abs(min))}` : '0h00');
+
+// valor das horas extras do dia pela CCT (cl. 26ª): 50% nas 2 primeiras horas, 100% nas demais; hora = salário / 220
+export function valorExtra(min, salario) {
+  const hora = (Number(salario) || 0) / 220;
+  const a = Math.min(min, 120), b = Math.max(0, min - 120);
+  return Math.round(((a / 60) * hora * 1.5 + (b / 60) * hora * 2) * 100) / 100;
+}

@@ -322,3 +322,17 @@ body:has(.salvarbar) .toast { bottom: calc(135px + env(safe-area-inset-bottom));
 form.linha { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; margin-top: .5rem; }
 form.linha input, form.linha select { flex: 1 1 7rem; min-width: 0; }
 form.linha b { flex: 1 1 100%; }
+.pbotoes { display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; }
+.pbtn { border: 2px solid var(--borda); background: #f6f8fb; border-radius: 12px; padding: 1rem .5rem; font: inherit; color: var(--suave); display: flex; flex-direction: column; align-items: center; gap: .2rem; }
+.pbtn span { font-size: .85rem; font-weight: 600; }
+.pbtn b { font-size: 1.4rem; }
+.pbtn.prox:not(:disabled) { background: var(--azul); border-color: var(--azul); color: #fff; box-shadow: 0 3px 10px rgba(0,60,140,.25); }
+.pbtn.feito { background: #e3f3e8; border-color: #b6dfc3; color: #1d7a3e; }
+.pbtn:disabled:not(.feito) { opacity: .55; }
+.meta-falta { margin: .4rem 0 .8rem; font-size: .95rem; }
+details.senha { margin: 1rem; text-align: center; }
+.ponto-tab td { white-space: nowrap; }
+.hora-in { width: 5.2rem; padding: .2rem; font-size: .85rem; border: 1px solid var(--borda); border-radius: 6px; }
+.hora-in.manual { background: #fff6e0; }
+.hora-in.neg { border-color: #d33; color: #d33; }
+tr.pago td { background: #f0f8f2; }
