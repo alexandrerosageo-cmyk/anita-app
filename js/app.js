@@ -8,7 +8,7 @@ import * as E from './escala.js';
 import { EMAIL_BACKUP } from './firebase-config.js';
 import { criarStore, salvarConfigFirebase, interpretarConfig, lerConfigFirebase, usarFirebasePadrao } from './store.js';
 
-const VERSAO = '2.22.2';
+const VERSAO = '2.23.0';
 const $app = document.getElementById('app');
 const S = { store: null, cfg: null, funcs: [], frota: [], meses: {}, tipoSel: 'paga', salvando: 0 };
 
@@ -284,6 +284,7 @@ async function rotear() {
     else if (rota === 'despesas') await telaDespesas(a || mkDe(hojeISO()));
     else if (rota === 'convpdf') await telaConvPdf(a);
     else if (rota === 'sulgaspdf') await telaSulgasPdf(a || 'aberto');
+    else if (rota === 'pagtopdf') await telaPagtoPdf(a || somaMes(mkDe(hojeISO()), -1));
     else if (rota === 'analise') await telaAnalise(a || 'mes', b || `${mkDe(hojeISO())}-01`);
     else if (rota === 'ajustes') await telaAjustes();
     else location.hash = '#/hoje';
@@ -712,6 +713,32 @@ function lerFichaHorario(fd) {
   return { dias, folgaApos: Number(fd.get('hFolgaApos')) || 3, cobertura: dia('cb') };
 }
 
+// ---------- PDF: pagamento do dia 1º para o financeiro ----------
+async function telaPagtoPdf(mk) {
+  const M = await mes(mk), ap = C.apuraMes(mk, M, S.cfg, S.funcs);
+  if ((M.folhaLegado || []).length && !M.folhaApp) prepararFolhaDaPlanilha(M, mk);
+  const mkProx = somaMes(mk, 1), Mp = await mes(mkProx), diaPg = C.diaPagamento(mk);
+  const lista = S.funcs.filter((f) => { const pf = ap.porFunc[f.id]; return C.ativoEm(f, `${mk}-15`) || (pf && (pf.T || pf.F || pf.J || pf.premioDiario)) || ((M.folha || {})[f.id]); }).sort((a, b) => a.nome.localeCompare(b.nome));
+  const linhas = lista.map((f) => {
+    const pf = ap.porFunc[f.id] || { T: 0, F: 0, J: 0, previstos: 0, presencaPct: 0, premioDiario: 0, bonus: 0, premioTotal: 0, elegivelBonus: false, dias: [] };
+    const fo = (M.folha || {})[f.id] || {}, r = C.folhaFunc(f, pf, fo, S.cfg, mk), vt = C.folhaFunc(f, null, (Mp.folha || {})[f.id], S.cfg, mkProx);
+    const det = [...(fo.extras || []).filter((e) => Number(e.valor)).map((e) => `+ ${e.desc || 'extra'} ${brl(e.valor)}`), ...(fo.descontos || []).filter((e) => Number(e.valor)).map((e) => `− ${e.desc || 'desconto'} ${brl(e.valor)}`)];
+    return { f, r, vt, total: C.r2(r.variavel + vt.vt), det };
+  });
+  const soma = (fn) => C.r2(linhas.reduce((a, l) => a + fn(l), 0));
+  document.title = `Pagamento ${dataBR(diaPg)} - Anita`;
+  $app.innerHTML = `<div class="pdf-barra naoimprime"><a class="btn" href="#/equipe/${mk}">‹ Voltar</a><button class="btn grande-inline" data-act="imprimir">🖨️ Imprimir / salvar PDF</button></div>
+    <div class="pdf"><section class="pdf-pag">
+      <header class="pdf-cab"><div><b>ANITA PARKING ESTACIONAMENTO LTDA.</b><small>CNPJ 29.215.496/0001-00 · Porto Alegre/RS</small></div><div class="pdf-tit">Pagamentos de ${dataBR(diaPg)}<small>Prêmios, extras e descontos de ${nomeMes(mk)} + VT de ${nomeMes(mkProx)}</small></div></header>
+      <table class="pdf-tab"><thead><tr><th>Funcionário</th><th>Chave PIX</th><th>Prêmio</th><th>Extras</th><th>Desc.</th><th>VT ${nomeMes(mkProx).slice(0, 3)}</th><th>A pagar</th></tr></thead><tbody>
+      ${linhas.map((l) => `<tr><td><b>${esc(l.f.nome)}</b>${l.det.length ? `<small>${esc(l.det.join(' · '))}</small>` : ''}</td><td class="pix">${l.f.pix ? esc(l.f.pix) : '<span class="neg">sem PIX no cadastro</span>'}</td><td>${brl(l.r.premio)}</td><td>${l.r.extras ? brl(l.r.extras) : '—'}</td><td>${l.r.descontos ? '−' + brl(l.r.descontos) : '—'}</td><td>${brl(l.vt.vt)}<small>${l.vt.vtDias} × ${brl(l.vt.vtDia)}</small></td><td><b>${brl(l.total)}</b></td></tr>`).join('')}
+      <tr class="tot"><td colspan="2">Total</td><td>${brl(soma((l) => l.r.premio))}</td><td>${brl(soma((l) => l.r.extras))}</td><td>${soma((l) => l.r.descontos) ? '−' + brl(soma((l) => l.r.descontos)) : '—'}</td><td>${brl(soma((l) => l.vt.vt))}</td><td><b>${brl(soma((l) => l.total))}</b></td></tr>
+      </tbody></table>
+      <p class="pdf-nota">Pagar até ${dataBR(diaPg)} por PIX, na chave indicada de cada funcionário. Salários não incluídos (pagos à parte). Gerado em ${dataBR(hojeISO())}.</p>
+      <div class="pdf-assinatura">${S.cfg.assinatura ? `<img src="${S.cfg.assinatura}" alt="">` : '<div class="espaco"></div>'}<span><b>${esc(S.cfg.assinaturaNome || 'Alexandre Rosa')}</b><br>Responsável · Anita Parking Estacionamento</span></div>
+    </section></div>`;
+}
+
 // ---------- TELA: equipe / folha ----------
 async function telaEquipe(mk) {
   const M = await mes(mk);
@@ -746,7 +773,8 @@ async function telaEquipe(mk) {
         <td><b>${brl(C.r2(l.r.variavel + l.vtProx.vt))}</b></td></tr>`).join('')}
       <tr class="tot"><td>Total</td><td>${brl(somaP((l) => l.r.premio))}</td><td>${brl(somaP((l) => l.r.extras))}</td><td>${somaP((l) => l.r.descontos) ? '−' + brl(somaP((l) => l.r.descontos)) : '—'}</td><td>${brl(somaP((l) => l.vtProx.vt))}</td><td>${brl(somaP((l) => l.r.variavel + l.vtProx.vt))}</td></tr>
       </tbody></table></div>
-      <p class="mini">No dia 1º vão prêmios, extras e descontos de ${nomeMes(mk).split(' ')[0]} e o VT de ${nomeMes(mkProx).split(' ')[0]} (previsto em ${C.diasUteis(mkProx)} dias úteis; ajuste os dias acima). Salários: ${brl(somaP((l) => l.r.salario))}, pagos à parte.</p></section>`;
+      <p class="mini">No dia 1º vão prêmios, extras e descontos de ${nomeMes(mk).split(' ')[0]} e o VT de ${nomeMes(mkProx).split(' ')[0]} (previsto em ${C.diasUteis(mkProx)} dias úteis; ajuste os dias acima). Salários: ${brl(somaP((l) => l.r.salario))}, pagos à parte.</p>
+      <div class="linha"><a class="btn pdfbtn" href="#/pagtopdf/${mk}">📄 PDF para o financeiro (com PIX)</a></div></section>`;
     folha = pagamento + resumo + linhas.map(({ f, pf, fo, r }) => {
       const motivo = !ap.regraNova ? 'regra antiga: sem bônus' : !fm ? 'equipe abaixo da meta mensal' : (pf.elegivelBonus ? `meta mensal ${fm.nivel}` : `presença ${Math.round(pf.presencaPct * 100)}% < ${S.cfg.presencaMin}%`);
       const item = (k, e, i, sinal) => `<div class="item-folha"><span>${sinal}</span><input data-fitem="${f.id}" data-k="${k}" data-i="${i}" data-c="desc" value="${esc(e.desc)}" placeholder="Descrição"><input data-fitem="${f.id}" data-k="${k}" data-i="${i}" data-c="valor" inputmode="decimal" value="${fmtN(e.valor)}" class="v"><button class="x" data-act="delFolha" data-id="${f.id}" data-k="${k}" data-i="${i}">✕</button></div>`;
