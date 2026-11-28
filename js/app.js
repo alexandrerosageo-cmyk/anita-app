@@ -8,7 +8,7 @@ import * as E from './escala.js';
 import { EMAIL_BACKUP } from './firebase-config.js';
 import { criarStore, salvarConfigFirebase, interpretarConfig, lerConfigFirebase, usarFirebasePadrao } from './store.js';
 
-const VERSAO = '2.21.0';
+const VERSAO = '2.21.1';
 const $app = document.getElementById('app');
 const S = { store: null, cfg: null, funcs: [], frota: [], meses: {}, tipoSel: 'paga', salvando: 0 };
 
@@ -699,12 +699,12 @@ function fichaHorario(f) {
   const dias = E.diasDoCadastro(f.horario), h = f.horario || {}, cb = h.cobertura || {};
   const lin = (pre, x, rot) => `<tr><td>${rot}</td><td><input type="time" class="hora-in" name="${pre}e" value="${x.e || ''}"></td><td><input type="time" class="hora-in" name="${pre}s" value="${x.s || ''}"></td><td><input type="time" class="hora-in" name="${pre}ai" value="${x.ai || ''}"></td><td><input class="hora-in" name="${pre}a" inputmode="numeric" style="width:3.2rem" value="${x.a ?? ''}"></td></tr>`;
   return `<h4>Horário de trabalho <small>deixe em branco os dias de folga</small></h4>
-    <div class="rola"><table class="tab ponto-tab"><thead><tr><th></th><th>Entrada</th><th>Saída</th><th>Intervalo</th><th>min</th></tr></thead><tbody>
+    <div class="rola"><table class="tab ponto-tab"><thead><tr><th></th><th>Entrada</th><th>Saída</th><th>Intervalo (ref.)</th><th>min</th></tr></thead><tbody>
     ${E.DIAS.map(([d, n]) => lin('d' + d, dias[d] || {}, n)).join('')}
     ${lin('cb', cb, 'Cobrindo folga')}
     </tbody></table></div>
     <div class="grade2"><label>Folga depois do sábado trabalhado<select name="hFolgaApos">${E.DIAS.slice(0, 5).map(([d, n]) => `<option value="${d}" ${Number(h.folgaApos || 3) === d ? 'selected' : ''}>${n} da semana seguinte</option>`).join('')}</select></label></div>
-    <p class="mini">Sábado: o horário vale só nos sábados em que ele estiver na escala (a partir de ${dataBR(cfgEscala().desde)}). "Cobrindo folga" é o horário dele no dia em que um colega da mesma função folga pelo sábado (em branco = horário normal). Intervalo: início e duração em minutos (60 de almoço; 15 de pausa em jornadas de 4h a 6h).</p>`;
+    <p class="mini">Sábado: o horário vale só nos sábados em que ele estiver na escala (a partir de ${dataBR(cfgEscala().desde)}). "Cobrindo folga" é o horário dele no dia em que um colega da mesma função folga pelo sábado (em branco = horário normal). Intervalo: a duração em minutos é o que conta (60 de almoço; 15 de pausa em jornadas de 4h a 6h); o horário de início é só referência, porque eles revezam no dia.</p>`;
 }
 function lerFichaHorario(fd) {
   const dia = (pre) => { const e = fd.get(pre + 'e'), s = fd.get(pre + 's'); if (!e || !s) return null; const a = fd.get(pre + 'a'); const x = { e, s, a: a === '' || a == null ? (E.hm(s) - E.hm(e) > 360 ? 60 : E.hm(s) - E.hm(e) > 240 ? 15 : 0) : num(a) }; const ai = fd.get(pre + 'ai'); if (ai) x.ai = ai; return x; };
@@ -1146,8 +1146,8 @@ function svgSemana(segunda, ctx) {
       const { t, motivo } = E.diaDe(p, iso, ctx);
       partes.push(`<text class="esc-nome" x="2" y="${y + 10}">${esc(p.nome.split(' ')[0])}</text>`);
       if (t) {
-        const cor = CORES_ESC[p.atende ? 'atendente' : 'lavador'], tit = `${p.nome}${motivo === 'cobertura' ? ' (cobrindo folga)' : ''}: ${E.mh(t.e)}–${E.mh(t.s)}${t.a ? `, intervalo ${E.mh(t.ai)}–${E.mh(t.ai + t.a)}` : ''} (${E.fmtH(t.trab)})`;
-        const segs = t.a ? [[t.e, t.ai], [t.ai + t.a, t.s]] : [[t.e, t.s]];
+        const cor = CORES_ESC[p.atende ? 'atendente' : 'lavador'], tit = `${p.nome}${motivo === 'cobertura' ? ' (cobrindo folga)' : ''}: ${E.mh(t.e)}–${E.mh(t.s)}${t.a ? `, intervalo de ${t.a} min (revezado no dia)` : ''} (${E.fmtH(t.trab)})`;
+        const segs = [[t.e, t.s]];
         for (const [a, b] of segs) if (b > a) partes.push(`<rect x="${x(a) + 1}" y="${y}" width="${Math.max(1, (b - a) * k - 2)}" height="${RH}" rx="3" fill="${cor}" ${motivo === 'cobertura' ? 'stroke="#191919" stroke-width="1"' : ''}><title>${esc(tit)}</title></rect>`);
       } else partes.push(`<text class="esc-folga" x="${x(fn[0]) + 4}" y="${y + 10}">${motivo}</text>`);
       y += RH + GAP;
@@ -1167,7 +1167,11 @@ async function telaEscala(mk) {
   const segundas = []; { let d = E.segundaDe(`${mk}-01`); while (d.slice(0, 7) <= mk) { segundas.push(d); d = E.addDias(d, 7); } }
   if (!S.semEsc || !segundas.includes(S.semEsc)) S.semEsc = segundas.find((d) => d.slice(0, 7) === mk) || segundas[0];
   const contAno = {}; for (const [sab, ids] of Object.entries(ctx.sabados)) if (sab.startsWith(String(ano))) for (const id of ids) contAno[id] = (contAno[id] || 0) + 1;
-  const problemas = (iso) => { const f = E.cobertura(iso, ctx); return [...E.buracos(f, (x) => !x.tot).map((b) => `ninguém ${E.mh(b.ini)}–${E.mh(b.fim)}`), ...E.buracos(f, (x) => x.tot && !x.at).map((b) => `sem caixa ${E.mh(b.ini)}–${E.mh(b.fim)}`)]; };
+  const problemas = (iso) => {
+    const f = E.cobertura(iso, ctx), out = [...E.buracos(f, (x) => !x.tot).map((b) => `ninguém ${E.mh(b.ini)}–${E.mh(b.fim)}`), ...E.buracos(f, (x) => x.tot && !x.at).map((b) => `sem caixa ${E.mh(b.ini)}–${E.mh(b.fim)}`)];
+    for (const p of pessoas) { const iv = E.intervalo(p, iso, ctx); if (!iv) continue; if (!iv.alguem) out.push(`${p.nome.split(' ')[0]} não tem com quem revezar o intervalo de ${iv.a} min`); else if (!iv.caixa) out.push(`no intervalo de ${p.nome.split(' ')[0]} (${iv.a} min) o caixa fica com um lavador`); }
+    return out;
+  };
   const sabados = sabMes.map((sab) => {
     if (ctx.fechados[sab]) return `<div class="esc-sab fechado"><b>${sab.slice(8)}/${sab.slice(5, 7)}</b><span class="esc-chips"><button class="chip off" data-act="escFechado" data-dia="${sab}">🚫 Não abrimos</button></span><small>Toque para voltar a abrir neste sábado.</small></div>`;
     const pr = problemas(sab), folgas = pessoas.filter((p) => E.trabalhaSabado(p.id, sab, ctx.sabados)).map((p) => `${p.nome.split(' ')[0]} folga ${E.DIAS[p.folgaApos - 1][1].toLowerCase()} ${E.addDias(sab, p.folgaApos + 1).slice(8)}/${E.addDias(sab, p.folgaApos + 1).slice(5, 7)}`);
@@ -1193,7 +1197,7 @@ async function telaEscala(mk) {
     <div class="esc-chips"><small>Não abrimos (feriado):</small>${E.DIAS.slice(0, 5).map(([d, n]) => { const iso = E.addDias(S.semEsc, d - 1); return `<button class="chip ${ctx.fechados[iso] ? 'on' : ''}" data-act="escFechado" data-dia="${iso}">${n} ${iso.slice(8)}/${iso.slice(5, 7)}</button>`; }).join('')}</div>
     ${semanaPr.length ? `<p class="mini neg">⚠ ${semanaPr.join(' · ')}</p>` : '<p class="mini pos">✓ Funcionamento coberto, com alguém no caixa o tempo todo.</p>'}
     <div class="rola"><table class="tab"><thead><tr><th>Horas</th><th class="r">Esta semana</th><th class="r">Próxima</th><th class="r">Média</th></tr></thead><tbody>${horas}</tbody></table></div>
-    <p class="mini">A semana com sábado passa de 44h e a seguinte (com a folga) fica abaixo: o que vale é a média, compensada por acordo escrito (CCT cl. 27ª). Contorno preto na barra = horário de cobertura de folga.</p>
+    <p class="mini">As barras vão da entrada à saída: o intervalo é revezado entre eles no dia, e o app só avisa quando alguém não tem com quem revezar. A semana com sábado passa de 44h e a seguinte (com a folga) fica abaixo: o que vale é a média, compensada por acordo escrito (CCT cl. 27ª). Contorno preto na barra = horário de cobertura de folga.</p>
   </section>
   <section class="card"><h3>Horário de funcionamento</h3>
     <div class="rola"><table class="tab"><thead><tr><th></th><th>Abre</th><th>Fecha</th></tr></thead><tbody>

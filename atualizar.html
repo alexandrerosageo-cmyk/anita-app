@@ -15,7 +15,7 @@
     if ('serviceWorker' in navigator) for (const r of await navigator.serviceWorker.getRegistrations()) await r.unregister();
     if (window.caches) for (const k of await caches.keys()) await caches.delete(k);
     // baixa de novo os arquivos do app, ignorando o cache do navegador
-    const arquivos = ['./', './index.html', './styles.css', './js/app.js', './js/calc.js', './js/store.js', './js/planilha.js', './js/xlsx-mini.js', './js/firebase-config.js', './js/analise.js', './js/convenio.js', './manifest.webmanifest'];
+    const arquivos = ['./', './index.html', './styles.css', './js/app.js', './js/calc.js', './js/store.js', './js/planilha.js', './js/xlsx-mini.js', './js/firebase-config.js', './js/analise.js', './js/convenio.js', './js/cct.js', './js/ponto.js', './js/escala.js', './manifest.webmanifest', './sw.js'];
     await Promise.all(arquivos.map((a) => fetch(a, { cache: 'reload' }).catch(() => {})));
     msg.textContent = 'Pronto! Abrindo o app…';
   } catch (e) { msg.textContent = 'Abrindo o app…'; }

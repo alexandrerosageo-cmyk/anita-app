@@ -75,7 +75,8 @@ export function diaDe(p, iso, ctx) {
   return { t, motivo: t ? 'normal' : 'folga' };
 }
 
-const presente = (t, m) => t && m >= t.e && m < t.s && !(t.a && m >= t.ai && m < t.ai + t.a);
+// o horário do intervalo é só referência (eles revezam no dia): conta presente de entrada a saída
+const presente = (t, m) => t && m >= t.e && m < t.s;
 
 // por faixa de 15 min: quantos no total, quantos atendentes (caixa) e quantos lavadores
 export function cobertura(iso, ctx) {
@@ -88,6 +89,22 @@ export function cobertura(iso, ctx) {
     out.push({ m, tot, at, lv });
   }
   return out;
+}
+
+// dá para essa pessoa tirar o intervalo revezando com alguém? (alguém presente durante a duração dele,
+// entre 1h depois da entrada e 1h antes da saída). caixa: no caso de atendente, se outro atendente cobre
+export function intervalo(p, iso, ctx) {
+  const { t } = diaDe(p, iso, ctx); if (!t || !t.a) return null;
+  const outros = ctx.pessoas.filter((o) => o.id !== p.id).map((o) => ({ o, t: diaDe(o, iso, ctx).t })).filter((x) => x.t);
+  const cabe = (filtro) => {
+    let corrida = 0;
+    for (let m = t.e + 60; m < t.s - 60; m += 15) {
+      corrida = outros.some((x) => filtro(x.o) && m >= x.t.e && m < x.t.s) ? corrida + 15 : 0;
+      if (corrida >= t.a) return true;
+    }
+    return false;
+  };
+  return { a: t.a, alguem: cabe(() => true), caixa: !p.atende || cabe((o) => o.atende) };
 }
 
 export function buracos(fatias, teste) {
