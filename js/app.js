@@ -8,7 +8,7 @@ import * as E from './escala.js';
 import { EMAIL_BACKUP } from './firebase-config.js';
 import { criarStore, salvarConfigFirebase, interpretarConfig, lerConfigFirebase, usarFirebasePadrao } from './store.js';
 
-const VERSAO = '2.21.1';
+const VERSAO = '2.21.2';
 const $app = document.getElementById('app');
 const S = { store: null, cfg: null, funcs: [], frota: [], meses: {}, tipoSel: 'paga', salvando: 0 };
 
@@ -1148,7 +1148,7 @@ function svgSemana(segunda, ctx) {
       if (t) {
         const cor = CORES_ESC[p.atende ? 'atendente' : 'lavador'], tit = `${p.nome}${motivo === 'cobertura' ? ' (cobrindo folga)' : ''}: ${E.mh(t.e)}–${E.mh(t.s)}${t.a ? `, intervalo de ${t.a} min (revezado no dia)` : ''} (${E.fmtH(t.trab)})`;
         const segs = [[t.e, t.s]];
-        for (const [a, b] of segs) if (b > a) partes.push(`<rect x="${x(a) + 1}" y="${y}" width="${Math.max(1, (b - a) * k - 2)}" height="${RH}" rx="3" fill="${cor}" ${motivo === 'cobertura' ? 'stroke="#191919" stroke-width="1"' : ''}><title>${esc(tit)}</title></rect>`);
+        for (let [a, b] of segs) { a = Math.max(a, T0); b = Math.min(b, T1); if (b > a) partes.push(`<rect x="${x(a) + 1}" y="${y}" width="${Math.max(1, (b - a) * k - 2)}" height="${RH}" rx="3" fill="${cor}" ${motivo === 'cobertura' ? 'stroke="#191919" stroke-width="1"' : ''}><title>${esc(tit)}</title></rect>`); }
       } else partes.push(`<text class="esc-folga" x="${x(fn[0]) + 4}" y="${y + 10}">${motivo}</text>`);
       y += RH + GAP;
     }

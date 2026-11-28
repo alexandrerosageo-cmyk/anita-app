@@ -71,7 +71,7 @@ export function proxima(por) {
 // ----- horários de trabalho, janela dos botões e banco de horas -----
 export const HORARIO_PADRAO = { entrada: '', saida: '', almoco: 60, sabEntrada: '', sabSaida: '' };
 export const JANELA_PADRAO = { antes: 15, depois: 120 };
-const hm = (s) => { const [h, m] = String(s || '').split(':').map(Number); return Number.isFinite(h) ? h * 60 + (m || 0) : null; };
+const hm = (s) => { if (s == null || String(s).trim() === '') return null; const [h, m] = String(s).split(':').map(Number); return Number.isFinite(h) ? h * 60 + (m || 0) : null; };
 const dow = (iso) => new Date(iso + 'T12:00:00').getDay();
 
 // expediente previsto do dia: {ini, fim, almoco} em minutos do dia, ou null (folga)

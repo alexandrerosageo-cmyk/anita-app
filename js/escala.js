@@ -6,7 +6,7 @@ export const DESDE_PADRAO = '2027-01-01';
 export const LIMITE_SEMANA = 44 * 60, LIMITE_DIA = 10 * 60;
 
 const p2 = (n) => String(n).padStart(2, '0');
-export const hm = (s) => { const [h, m] = String(s || '').split(':').map(Number); return Number.isFinite(h) ? h * 60 + (m || 0) : null; };
+export const hm = (s) => { if (s == null || String(s).trim() === '') return null; const [h, m] = String(s).split(':').map(Number); return Number.isFinite(h) ? h * 60 + (m || 0) : null; };
 export const mh = (min) => `${p2(Math.floor(min / 60))}:${p2(Math.round(min % 60))}`;
 export const fmtH = (min) => `${Math.floor(min / 60)}h${p2(Math.round(min % 60))}`;
 
