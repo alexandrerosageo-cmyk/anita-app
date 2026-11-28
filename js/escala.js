@@ -40,8 +40,8 @@ export const turnoNoDia = (p, iso, sabados) => turno(modeloDaSemana(p, iso, saba
 const presente = (t, m) => t && m >= t.e && m < t.s && !(t.a && m >= t.ai && m < t.ai + t.a);
 
 // cobertura de um dia: por faixa de 15 min, quantos no total e quantos atendentes (caixa)
-export function cobertura(pessoas, iso, sabados) {
-  const d = dow(iso); if (!FUNCIONAMENTO[d]) return [];
+export function cobertura(pessoas, iso, sabados, fechados) {
+  const d = dow(iso); if (!FUNCIONAMENTO[d] || (fechados || {})[iso]) return [];
   const [ini, fim] = FUNCIONAMENTO[d], ts = pessoas.map((p) => ({ p, t: turnoNoDia(p, iso, sabados) })), fatias = [];
   for (let m = ini; m < fim; m += 15) {
     let tot = 0, at = 0;
@@ -78,11 +78,11 @@ export function conferirModelo(mod) {
 }
 
 // rodízio do ano: distribui os sábados entre as pessoas escolhidas, em ordem, N por sábado
-export function gerarRodizio(ano, ids, porSabado = 1, desde = '0000') {
+export function gerarRodizio(ano, ids, porSabado = 1, desde = '0000', fechados = {}) {
   const out = {}; let i = 0;
   if (!ids.length) return out;
   for (const sab of sabadosDoAno(ano)) {
-    if (sab < desde) continue;
+    if (sab < desde || fechados[sab]) continue;
     const quem = [];
     for (let k = 0; k < Math.min(porSabado, ids.length); k++) quem.push(ids[(i + k) % ids.length]);
     out[sab] = quem; i += Math.min(porSabado, ids.length);
@@ -105,3 +105,28 @@ export function proposta(atendentes, lavadores) {
   lavadores.forEach((id) => { out[id] = { sem: util(dia('09:00', '18:48', '13:00')), com: { 1: longo, 2: longo, 3: longo, 5: longo, 6: dia('09:30', '15:30', '12:30', 15) } }; });
   return out;
 }
+
+// ----- modelos a partir do cadastro (ficha) + ajustes feitos na tela de escala -----
+// ficha: horario = {entrada, saida, almoco, almocoIni, sabEntrada, sabSaida, folgaSab}
+export function modelosDoCadastro(h) {
+  h = h || {};
+  const sem = {}, com = {};
+  if (h.entrada && h.saida) {
+    const a = Number(h.almoco ?? 60) || 0, dia = { e: h.entrada, s: h.saida, a, ...(a && h.almocoIni ? { ai: h.almocoIni } : {}) };
+    for (let d = 1; d <= 5; d++) { sem[d] = { ...dia }; if (d !== Number(h.folgaSab || 4)) com[d] = { ...dia }; }
+  }
+  if (h.sabEntrada && h.sabSaida) {
+    const span = hm(h.sabSaida) - hm(h.sabEntrada), a = span <= 360 ? 15 : Number(h.almoco ?? 60) || 0;
+    com[6] = { e: h.sabEntrada, s: h.sabSaida, a };
+  }
+  return { sem, com };
+}
+export function modelosDe(f) {
+  const base = modelosDoCadastro(f.horario), aj = f.escala || {}, out = {};
+  for (const q of ['sem', 'com']) {
+    out[q] = { ...base[q] };
+    for (const [d, v] of Object.entries(aj[q] || {})) { if (v && v.folga) delete out[q][d]; else out[q][d] = v; }
+  }
+  return out;
+}
+export const temAjuste = (f) => !!(f.escala && (Object.keys(f.escala.sem || {}).length || Object.keys(f.escala.com || {}).length));

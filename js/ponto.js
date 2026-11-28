@@ -78,6 +78,7 @@ const dow = (iso) => new Date(iso + 'T12:00:00').getDay();
 export function expediente(h, iso) {
   h = { ...HORARIO_PADRAO, ...(h || {}) };
   const d = dow(iso);
+  if ((h.fechados || []).includes(iso)) return null; // dia em que não abrimos
   const esc = h.escala;
   if (esc && (esc.com || esc.sem) && iso >= (esc.desde || '0000')) {
     const t = turnoEscala(((esc.sabados || []).includes(sabadoDe(iso)) ? esc.com : esc.sem || {})[d]);

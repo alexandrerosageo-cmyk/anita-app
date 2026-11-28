@@ -350,3 +350,5 @@ tr.pago td { background: #f0f8f2; }
 .esc-sab small { flex-basis: 100%; }
 .chip { border: 1px solid var(--borda); background: #fff; border-radius: 999px; padding: .25rem .7rem; font: inherit; font-size: .85rem; color: var(--suave); }
 .chip.on { background: var(--azul); border-color: var(--azul); color: #fff; }
+.chip.off { background: #fdecea; border-color: #f5c2bd; color: #b3261e; }
+.esc-sab.fechado b { color: var(--suave); }
